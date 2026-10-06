@@ -91,8 +91,9 @@ Gate 0 remains available for fixed-font PDF and SVG preflight:
 ## Demonstration and submission evidence
 
 - `devpost/demo-guide.md` contains the local two-session demonstration sequence.
-- `devpost/ship-evidence.md` records factual build evidence and unresolved publication fields.
-- Public repository creation, remote push, deployment, video publication, and Devpost submission require separate explicit authorization and are not performed by the build.
+- `devpost/ship-evidence.md` records factual build evidence, the authorized public repository, and the remaining learner-owned submission fields.
+- The sanitized source was published after explicit authorization at <https://github.com/jiarong0423/service-requirement-blueprint>.
+- Deployment, video publication, and Devpost submission require separate explicit authorization and have not been performed.
 
 ## License
 

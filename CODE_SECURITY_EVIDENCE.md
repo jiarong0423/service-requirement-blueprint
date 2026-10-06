@@ -1,7 +1,8 @@
 # Code Security Evidence
 
-Review date: 2026-10-07  
-Source snapshot: `93f27fedf1a5a07ef34b9403c221dbdbd1b70b5f`
+Review date: 2026-10-07
+
+Source snapshot: `fc4b1dd0a6123736f01eded908c2b11599a7bf05`
 
 ## Reviewed Controls
 

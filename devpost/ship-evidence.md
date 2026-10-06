@@ -31,12 +31,13 @@ The PoC preserves evidence and workflow history. It does not provide payment, es
 
 The learner selected the MIT License on 2026-10-07. The bundled Noto Sans TC files retain their separate SIL Open Font License and provenance record.
 
+The learner authorized publication on 2026-10-07. The sanitized 122-file source candidate is publicly available at <https://github.com/jiarong0423/service-requirement-blueprint>. The canonical repository history, private learner profiles, internal logs, runtime data, and credentials were not published.
+
 These remain intentionally blank during the current `6-ship` preparation:
 
-- Public GitHub repository URL
 - Public short video URL
-- Final project name and one-line description
-- Devpost submission answers
+- Learner-authored Devpost project name, elevator pitch, description, testing instructions, and Skill Pack explanation
+- Age-of-majority confirmation and remaining Devpost submission answers
 - Exit survey and peer-feedback evidence
 
-No remote, public push, deployment, video upload, or Devpost submission was created during `5-build`.
+No remote, public push, deployment, video upload, or Devpost submission was created during `5-build`. Repository publication occurred later during `6-ship` after explicit learner authorization; deployment, video upload, and Devpost submission remain incomplete.

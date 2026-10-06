@@ -3,7 +3,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 
 
-def test_english_ship_documents_are_factual_and_keep_publication_frozen(project_root) -> None:
+def test_english_ship_documents_are_factual_and_record_authorized_publication(project_root) -> None:
     readme = (project_root / "README.md").read_text(encoding="utf-8")
     demo = (project_root / "devpost/demo-guide.md").read_text(encoding="utf-8")
     evidence = (project_root / "devpost/ship-evidence.md").read_text(encoding="utf-8")
@@ -12,7 +12,10 @@ def test_english_ship_documents_are_factual_and_keep_publication_frozen(project_
     assert "private JSON B drafts" in readme
     assert "## Return, remediation, and explicit acceptance" in demo
     assert "no winner, liability, damages, refund, or payment decision" in demo
-    assert "Public GitHub repository URL" in evidence
+    public_repository = "https://github.com/jiarong0423/service-requirement-blueprint"
+    assert public_repository in readme
+    assert public_repository in evidence
+    assert "sanitized 122-file source candidate" in evidence
     assert "No remote, public push, deployment" in evidence
     assert "production ready" not in (readme + demo + evidence).lower()
     assert "legal guarantee" not in (readme + demo + evidence).lower()

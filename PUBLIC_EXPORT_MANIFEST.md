@@ -1,9 +1,12 @@
 # Public Export Manifest
 
-Review date: 2026-10-07  
-Source snapshot: `93f27fedf1a5a07ef34b9403c221dbdbd1b70b5f`  
-Export target: a new public repository containing a sanitized snapshot of Service Requirement Blueprint  
-Export decision: technically ready after candidate gates pass; public repository creation and push still require the learner's explicit authorization
+Review date: 2026-10-07
+
+Source snapshot: `fc4b1dd0a6123736f01eded908c2b11599a7bf05`
+
+Public repository: <https://github.com/jiarong0423/service-requirement-blueprint>
+
+Export decision: published after the learner's explicit authorization on 2026-10-07; later updates remain subject to the same allowlist and release gates
 
 ## Allowed Paths
 
@@ -64,4 +67,4 @@ Export decision: technically ready after candidate gates pass; public repository
 - Run the local release-boundary scanner and AI security export gate against the candidate root.
 - Review all scanner high findings by path and rule without exposing matched values.
 - Confirm that `LICENSE` exists and is visible at repository root.
-- Obtain explicit authorization before creating a public repository or pushing this candidate.
+- Confirm that the learner's explicit authorization covers the repository name, public visibility, and exact sanitized candidate before each publication action.
