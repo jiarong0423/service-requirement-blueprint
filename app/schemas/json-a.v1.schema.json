@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/schemas/json-a.v1.schema.json",
+  "title": "Requirement Request JSON A",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "document_type", "document_id", "version", "generated_at", "project", "users_and_scenarios", "pages_and_content", "features", "data_and_permissions", "external_services_and_assets", "visual_preferences", "delivery_and_constraints", "blueprint", "open_items"],
+  "properties": {
+    "schema_version": {"const": "json-a/1.1"},
+    "document_type": {"const": "requirement_request"},
+    "document_id": {"type": "string", "format": "uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "project": {"$ref": "#/$defs/project"},
+    "users_and_scenarios": {"$ref": "#/$defs/users"},
+    "pages_and_content": {"$ref": "#/$defs/pages"},
+    "features": {"$ref": "#/$defs/features"},
+    "data_and_permissions": {"$ref": "#/$defs/data"},
+    "external_services_and_assets": {"$ref": "#/$defs/external"},
+    "visual_preferences": {"$ref": "#/$defs/visual"},
+    "delivery_and_constraints": {"$ref": "#/$defs/delivery"},
+    "blueprint": {"$ref": "#/$defs/blueprint"},
+    "open_items": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/open_item"}}
+  },
+  "$defs": {
+    "text": {"type": "string", "maxLength": 10000},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "string_list": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/text"}},
+    "project": {
+      "type": "object", "additionalProperties": false,
+      "required": ["working_name", "target_audience", "primary_purpose", "primary_visitor_action", "supplemental_notes"],
+      "properties": {
+        "working_name": {"$ref": "#/$defs/title"}, "target_audience": {"$ref": "#/$defs/text"},
+        "primary_purpose": {"$ref": "#/$defs/text"}, "primary_visitor_action": {"$ref": "#/$defs/text"},
+        "supplemental_notes": {"$ref": "#/$defs/text"}
+      }
+    },
+    "users": {
+      "type": "object", "additionalProperties": false,
+      "required": ["user_groups", "primary_devices", "entry_paths", "core_actions"],
+      "properties": {"user_groups": {"$ref": "#/$defs/string_list"}, "primary_devices": {"$ref": "#/$defs/string_list"}, "entry_paths": {"$ref": "#/$defs/string_list"}, "core_actions": {"$ref": "#/$defs/string_list"}}
+    },
+    "page": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "purpose", "content_items"],
+      "properties": {"id": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "title": {"$ref": "#/$defs/title"}, "purpose": {"$ref": "#/$defs/text"}, "content_items": {"$ref": "#/$defs/string_list"}}
+    },
+    "pages": {
+      "type": "object", "additionalProperties": false, "required": ["pages", "language_requirements"],
+      "properties": {"pages": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/page"}}, "language_requirements": {"$ref": "#/$defs/string_list"}}
+    },
+    "feature": {
+      "type": "object", "additionalProperties": false, "required": ["feature_code", "requirement_level", "rules"],
+      "properties": {"feature_code": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "requirement_level": {"enum": ["required", "desired", "excluded", "undecided"]}, "rules": {"$ref": "#/$defs/string_list"}}
+    },
+    "features": {"type": "object", "additionalProperties": false, "required": ["items"], "properties": {"items": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/feature"}}}},
+    "role": {
+      "type": "object", "additionalProperties": false, "required": ["role_code", "read_rights", "write_rights"],
+      "properties": {"role_code": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "read_rights": {"$ref": "#/$defs/string_list"}, "write_rights": {"$ref": "#/$defs/string_list"}}
+    },
+    "data": {
+      "type": "object", "additionalProperties": false,
+      "required": ["data_categories", "contains_customer_data", "roles", "retention_expectations", "deletion_expectations"],
+      "properties": {"data_categories": {"$ref": "#/$defs/string_list"}, "contains_customer_data": {"type": "boolean"}, "roles": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/role"}}, "retention_expectations": {"$ref": "#/$defs/text"}, "deletion_expectations": {"$ref": "#/$defs/text"}}
+    },
+    "service": {
+      "type": "object", "additionalProperties": false, "required": ["service_code", "status", "notes"],
+      "properties": {"service_code": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "status": {"enum": ["existing", "to_select", "contractor_proposal", "not_needed"]}, "notes": {"$ref": "#/$defs/text"}}
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false, "required": ["asset_code", "status", "notes"],
+      "properties": {"asset_code": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "status": {"enum": ["existing", "to_select", "contractor_proposal", "not_needed"]}, "notes": {"$ref": "#/$defs/text"}}
+    },
+    "external": {"type": "object", "additionalProperties": false, "required": ["services", "assets"], "properties": {"services": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/service"}}, "assets": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/asset"}}}},
+    "reference_site": {"type": "object", "additionalProperties": false, "required": ["url", "reason"], "properties": {"url": {"type": "string", "format": "uri"}, "reason": {"$ref": "#/$defs/text"}}},
+    "visual": {
+      "type": "object", "additionalProperties": false,
+      "required": ["brand_style", "colors", "reference_sites", "mobile_requirements", "accessibility_requirements", "excluded_directions"],
+      "properties": {"brand_style": {"$ref": "#/$defs/string_list"}, "colors": {"$ref": "#/$defs/string_list"}, "reference_sites": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/reference_site"}}, "mobile_requirements": {"$ref": "#/$defs/string_list"}, "accessibility_requirements": {"$ref": "#/$defs/string_list"}, "excluded_directions": {"$ref": "#/$defs/string_list"}}
+    },
+    "delivery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deliverables", "source_code_ownership", "account_ownership", "deployment_expectation", "maintenance_expectation", "launch_conditions", "required_deadline", "budget_status", "budget_currency", "budget_min_amount", "budget_max_amount", "acceptance_expectations", "constraints"],
+      "properties": {
+        "deliverables": {"$ref": "#/$defs/string_list"}, "source_code_ownership": {"$ref": "#/$defs/text"}, "account_ownership": {"$ref": "#/$defs/string_list"},
+        "deployment_expectation": {"$ref": "#/$defs/text"}, "maintenance_expectation": {"$ref": "#/$defs/text"}, "launch_conditions": {"$ref": "#/$defs/string_list"},
+        "required_deadline": {"type": ["string", "null"], "format": "date"}, "budget_status": {"enum": ["known", "range", "undecided", "contractor_proposal_requested"]},
+        "budget_currency": {"type": ["string", "null"], "pattern": "^[A-Z]{3}$"},
+        "budget_min_amount": {"type": ["integer", "null"], "minimum": 0, "maximum": 9999999999}, "budget_max_amount": {"type": ["integer", "null"], "minimum": 0, "maximum": 9999999999},
+        "acceptance_expectations": {"$ref": "#/$defs/string_list"}, "constraints": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "blueprint_text": {"type": "string", "maxLength": 240},
+    "node": {"type": "object", "additionalProperties": false, "required": ["id", "label"], "properties": {"id": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "label": {"$ref": "#/$defs/blueprint_text"}}},
+    "edge": {"type": "object", "additionalProperties": false, "required": ["source", "target", "label"], "properties": {"source": {"type": "string"}, "target": {"type": "string"}, "label": {"$ref": "#/$defs/blueprint_text"}}},
+    "blueprint": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges"], "properties": {"nodes": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/node"}}, "edges": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/edge"}}}},
+    "open_item": {"type": "object", "additionalProperties": false, "required": ["section_code", "field_pointer", "resolution", "note"], "properties": {"section_code": {"type": "string"}, "field_pointer": {"type": "string"}, "resolution": {"enum": ["undecided", "contractor_proposal_requested"]}, "note": {"$ref": "#/$defs/text"}}}
+  }
+}

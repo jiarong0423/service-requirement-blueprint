@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.formal_verification') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<section class="card stack">
+  <header class="section-heading">
+    <div><p class="eyebrow">{{ tr('document.formal') }}</p><h1>{{ tr('page.formal_verification') }}</h1></div>
+    <span class="status-chip">{{ tr('status.formal') }}</span>
+  </header>
+  <aside class="readonly-banner"><strong>{{ tr('notice.formal_same_saved_bytes') }}</strong><span>{{ tr('notice.no_implied_confirmation') }}</span></aside>
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ formal.case.id }}</code></dd></div>
+    <div><dt>{{ tr('field.candidate_id') }}</dt><dd><code>{{ formal.candidate.id }}</code></dd></div>
+    <div><dt>{{ tr('field.formalized_at') }}</dt><dd>{{ formal.round.formalized_at }}</dd></div>
+    <div><dt>{{ tr('field.json_a_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.json_a_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.json_b_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.json_b_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.manifest_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.manifest_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.pdf_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.pdf_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.svg_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.svg_sha256 }}</code></dd></div>
+  </dl>
+  <section class="data-panel stack">
+    <h2>{{ tr('page.confirmation_status') }}</h2>
+    <dl class="identity-grid">
+      {% for acknowledgement in formal.acknowledgements %}
+      <div><dt>{{ tr('field.client') if acknowledgement.actor_role == 'client' else tr('field.contractor') }} · {{ tr('status.acknowledged') }}</dt><dd>{{ acknowledgement.acknowledged_at }}</dd></div>
+      {% endfor %}
+      {% for confirmation in formal.confirmations %}
+      <div><dt>{{ tr('field.client') if confirmation.actor_role == 'client' else tr('field.contractor') }}</dt><dd>{{ tr('status.confirmed') }} · {{ confirmation.confirmed_at }}<br>{{ tr('status.formal') }} · {{ confirmation.formalized_at }}</dd></div>
+      {% endfor %}
+    </dl>
+  </section>
+  <p class="inline-actions">
+    <a class="button" href="/{{ locale }}/cases/{{ formal.case.id }}/delivery">{{ tr('action.open_delivery_review') }}</a>
+    <a class="button" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/document.pdf">{{ tr('action.open_candidate_pdf') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/document.pdf?download=1">{{ tr('action.download_formal') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/manifest.json">{{ tr('action.download_manifest') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg">{{ tr('action.open_candidate_svg') }}</a>
+  </p>
+  <img class="blueprint" src="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg" alt="{{ tr('document.blueprint') }}">
+  {% if case_role == 'client' %}
+  <form method="post" action="/{{ locale }}/cases/{{ formal.case.id }}/separate-proposals" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ separate_proposal_idempotency_key }}">
+    <p>{{ tr('notice.separate_proposal_fresh_scope') }}</p>
+    <button>{{ tr('action.start_separate_proposal') }}</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

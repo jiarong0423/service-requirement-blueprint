@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ tr('app.name') }}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script defer src="{{ url_for('static', filename='js/app.js') }}"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/{{ locale }}/">{{ tr('app.name') }}</a>
+    <nav>
+      {% if g.user %}<a href="/{{ locale }}/account">{{ tr('nav.account') }}</a>{% endif %}
+      {% if g.user %}<form class="inline" method="post" action="/{{ locale }}/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>{{ tr('action.sign_out') }}</button></form>{% endif %}
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer>{{ tr('notice.local_only') }}</footer>
+</body>
+</html>

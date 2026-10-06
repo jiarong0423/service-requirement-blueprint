@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/schemas/json-b.v1.schema.json",
+  "title": "Specification and Quote JSON B 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_type",
+    "document_id",
+    "version",
+    "generated_at",
+    "case_id",
+    "source_json_a",
+    "requirement_understanding",
+    "included_scope",
+    "excluded_scope",
+    "pages",
+    "functions",
+    "data_and_permissions",
+    "third_party_services",
+    "milestones",
+    "effort",
+    "fee_items",
+    "computed_fee_totals",
+    "responsibilities",
+    "acceptance",
+    "remediation",
+    "maintenance",
+    "quote_expires_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "json-b/1.0"},
+    "document_type": {"const": "contractor_proposal"},
+    "document_id": {"type": "string", "format": "uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "case_id": {"type": "string", "format": "uuid"},
+    "source_json_a": {"$ref": "#/$defs/source_json_a"},
+    "requirement_understanding": {"$ref": "#/$defs/text"},
+    "included_scope": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/scope_item"}
+    },
+    "excluded_scope": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/scope_item"}
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/page"}
+    },
+    "functions": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/function"}
+    },
+    "data_and_permissions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/data_permission"}
+    },
+    "third_party_services": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/third_party_service"}
+    },
+    "milestones": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/milestone"}
+    },
+    "effort": {"$ref": "#/$defs/effort"},
+    "fee_items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/fee_item"}
+    },
+    "computed_fee_totals": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/fee_total"}
+    },
+    "responsibilities": {"$ref": "#/$defs/responsibilities"},
+    "acceptance": {"$ref": "#/$defs/acceptance"},
+    "remediation": {"$ref": "#/$defs/remediation"},
+    "maintenance": {"$ref": "#/$defs/maintenance"},
+    "quote_expires_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "short_text": {"type": "string", "minLength": 1, "maxLength": 200},
+    "string_list": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/text"}
+    },
+    "source_json_a": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "document_id",
+        "version",
+        "schema_version",
+        "sha256",
+        "byte_length"
+      ],
+      "properties": {
+        "artifact_id": {"type": "string", "format": "uuid"},
+        "document_id": {"type": "string", "format": "uuid"},
+        "version": {"type": "integer", "minimum": 1},
+        "schema_version": {"const": "json-a/1.1"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "byte_length": {"type": "integer", "minimum": 1, "maximum": 1048576}
+      }
+    },
+    "scope_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "description"],
+      "properties": {
+        "item_id": {"type": "string", "format": "uuid"},
+        "description": {"$ref": "#/$defs/text"}
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_id", "title", "deliverables"],
+      "properties": {
+        "page_id": {"type": "string", "format": "uuid"},
+        "title": {"$ref": "#/$defs/short_text"},
+        "deliverables": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function_id", "name", "rules"],
+      "properties": {
+        "function_id": {"type": "string", "format": "uuid"},
+        "name": {"$ref": "#/$defs/short_text"},
+        "rules": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "data_permission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role_code", "data_categories", "permissions"],
+      "properties": {
+        "role_code": {"$ref": "#/$defs/short_text"},
+        "data_categories": {"$ref": "#/$defs/string_list"},
+        "permissions": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "third_party_service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_code", "responsible_party", "notes"],
+      "properties": {
+        "service_code": {"$ref": "#/$defs/short_text"},
+        "responsible_party": {"enum": ["client", "contractor"]},
+        "notes": {"type": "string", "maxLength": 4000}
+      }
+    },
+    "milestone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["milestone_id", "title", "deliverables", "estimated_working_days"],
+      "properties": {
+        "milestone_id": {"type": "string", "format": "uuid"},
+        "title": {"$ref": "#/$defs/short_text"},
+        "deliverables": {"$ref": "#/$defs/string_list"},
+        "estimated_working_days": {"type": "integer", "minimum": 0, "maximum": 3650}
+      }
+    },
+    "effort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["estimated_hours", "difficulty", "assumptions"],
+      "properties": {
+        "estimated_hours": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "difficulty": {"enum": ["low", "medium", "high"]},
+        "assumptions": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "fee_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fee_id",
+        "description",
+        "billing_kind",
+        "cost_source",
+        "currency_code",
+        "amount",
+        "billing_period",
+        "included_in_quote"
+      ],
+      "properties": {
+        "fee_id": {"type": "string", "format": "uuid"},
+        "description": {"$ref": "#/$defs/text"},
+        "billing_kind": {"enum": ["one_time", "recurring"]},
+        "cost_source": {"enum": ["contractor", "third_party"]},
+        "currency_code": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "amount": {"type": "integer", "minimum": 0, "maximum": 9999999999},
+        "billing_period": {"type": ["string", "null"], "enum": [null, "monthly", "quarterly", "yearly"]},
+        "included_in_quote": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"billing_kind": {"const": "one_time"}}, "required": ["billing_kind"]},
+          "then": {"properties": {"billing_period": {"type": "null"}}},
+          "else": {"properties": {"billing_period": {"enum": ["monthly", "quarterly", "yearly"]}}}
+        }
+      ]
+    },
+    "fee_total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "billing_kind",
+        "cost_source",
+        "currency_code",
+        "amount",
+        "billing_period",
+        "included_in_quote"
+      ],
+      "properties": {
+        "billing_kind": {"enum": ["one_time", "recurring"]},
+        "cost_source": {"enum": ["contractor", "third_party"]},
+        "currency_code": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "amount": {"type": "integer", "minimum": 0, "maximum": 9999999999},
+        "billing_period": {"type": ["string", "null"], "enum": [null, "monthly", "quarterly", "yearly"]},
+        "included_in_quote": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"billing_kind": {"const": "one_time"}}, "required": ["billing_kind"]},
+          "then": {"properties": {"billing_period": {"type": "null"}}},
+          "else": {"properties": {"billing_period": {"enum": ["monthly", "quarterly", "yearly"]}}}
+        }
+      ]
+    },
+    "responsibilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["client", "contractor"],
+      "properties": {
+        "client": {"$ref": "#/$defs/string_list"},
+        "contractor": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "acceptance_criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criterion_id", "description", "verification_method"],
+      "properties": {
+        "criterion_id": {"type": "string", "format": "uuid"},
+        "description": {"$ref": "#/$defs/text"},
+        "verification_method": {"$ref": "#/$defs/text"}
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criteria", "review_period_days", "silence_is_acceptance"],
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {"$ref": "#/$defs/acceptance_criterion"}
+        },
+        "review_period_days": {"type": "integer", "minimum": 1, "maximum": 3650},
+        "silence_is_acceptance": {"const": false}
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included_corrections", "excluded_changes", "reinspection_required"],
+      "properties": {
+        "included_corrections": {"$ref": "#/$defs/string_list"},
+        "excluded_changes": {"$ref": "#/$defs/string_list"},
+        "reinspection_required": {"type": "boolean"}
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["warranty_days", "included_support", "excluded_support"],
+      "properties": {
+        "warranty_days": {"type": "integer", "minimum": 0, "maximum": 3650},
+        "included_support": {"$ref": "#/$defs/string_list"},
+        "excluded_support": {"$ref": "#/$defs/string_list"}
+      }
+    }
+  }
+}

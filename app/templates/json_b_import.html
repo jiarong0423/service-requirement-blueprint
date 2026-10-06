@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.json_b_import') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<section class="card stack">
+  <h1>{{ tr('page.json_b_import') }}</h1>
+  <p>{{ tr('notice.json_b_exact_bytes') }}</p>
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.document_id') }}</dt><dd><code>{{ artifact.id }}</code></dd></div>
+    <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ artifact.sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.byte_length') }}</dt><dd>{{ artifact.byte_length }}</dd></div>
+  </dl>
+  <p><a class="button" href="/{{ locale }}/cases/{{ case_id }}/json-b/draft/exports/{{ artifact.id }}/download">{{ tr('action.download_json_b') }}</a></p>
+  <form method="post" enctype="multipart/form-data" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="artifact_id" value="{{ artifact.id }}">
+    <label>{{ tr('field.json_b_file') }}<input type="file" name="json_b_file" accept="application/json,.json" required></label>
+    <button>{{ tr('action.submit_json_b') }}</button>
+  </form>
+</section>
+{% endblock %}

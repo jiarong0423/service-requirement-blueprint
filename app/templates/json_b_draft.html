@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.json_b_draft') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<div class="progress">{{ tr('case.party_only') }} · {{ tr('status.json_b_private_draft') }}</div>
+<section class="card stack">
+  <header class="section-heading">
+    <div><p class="eyebrow">{{ tr('document.json_b') }}</p><h1>{{ tr('page.json_b_draft') }}</h1></div>
+    <span class="status-chip">{{ tr('role.contractor') }}</span>
+  </header>
+  <aside class="readonly-banner"><strong>{{ tr('notice.json_b_draft_private') }}</strong><span>{{ tr('notice.json_b_server_fields') }}</span></aside>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ draft.content_revision if draft else 0 }}">
+    <label>{{ tr('field.json_b_business_data') }}
+      <textarea name="draft_json" rows="34" spellcheck="false" required data-user-content>{{ draft_text }}</textarea>
+    </label>
+    <p class="help">{{ tr('help.json_b_business_data') }}</p>
+    <button>{{ tr('action.save_json_b_draft') }}</button>
+  </form>
+  {% if draft %}
+  <form method="post" action="/{{ locale }}/cases/{{ case_id }}/json-b/draft/export">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ draft.content_revision }}">
+    <button class="button-secondary">{{ tr('action.export_json_b') }}</button>
+  </form>
+  {% endif %}
+  <p><a href="/{{ locale }}/cases/{{ case_id }}">{{ tr('action.open_private_case') }}</a></p>
+</section>
+{% endblock %}

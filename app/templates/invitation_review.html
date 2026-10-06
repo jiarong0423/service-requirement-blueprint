@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% set invitation_state = invitation.state|upper %}
+{% block title %}{{ tr('page.invitation_review') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<section class="card narrow stack">
+  <header>
+    <p class="eyebrow">{{ tr('case.private') }}</p>
+    <h1>{{ tr('page.invitation_review') }}</h1>
+    <p>{{ tr('notice.invitation_minimum_summary') }}</p>
+  </header>
+
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.client') }}</dt><dd data-user-content>{{ invitation.client_display_name }}</dd></div>
+    <div><dt>{{ tr('field.project_name') }}</dt><dd data-user-content>{{ invitation.case_title }}</dd></div>
+    <div><dt>{{ tr('field.assigned_role') }}</dt><dd>{{ tr('role.contractor') }}</dd></div>
+    <div><dt>{{ tr('field.invitation_expiry') }}</dt><dd>{{ invitation.expires_at }}</dd></div>
+    <div><dt>{{ tr('field.json_a_version') }}</dt><dd>{{ invitation.json_a_version_no }}</dd></div>
+    <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ invitation.json_a_sha256 }}</code></dd></div>
+  </dl>
+
+  <div class="status-banner">
+    <strong>{{ tr('field.invitation_status') }}</strong>
+    <span>
+      {% if invitation_state == 'PENDING' %}{{ tr('status.invitation_pending') }}
+      {% elif invitation_state == 'ACCEPTED' %}{{ tr('status.invitation_accepted') }}
+      {% elif invitation_state == 'REJECTED' %}{{ tr('status.invitation_rejected') }}
+      {% elif invitation_state == 'REVOKED' %}{{ tr('status.invitation_revoked') }}
+      {% elif invitation_state == 'EXPIRED' %}{{ tr('status.invitation_expired') }}
+      {% else %}{{ tr('error.invitation_invalid') }}{% endif %}
+    </span>
+  </div>
+
+  {% if invitation_state == 'PENDING' %}
+  <div class="split-grid">
+    <form class="stack data-panel" method="post" action="/{{ locale }}/invitations/{{ invitation.id }}/accept">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ invitation.case_revision }}">
+      <label>
+        <span>{{ tr('field.invitation_code') }}</span>
+        <input type="password" name="invitation_code" autocomplete="one-time-code" required>
+      </label>
+      <p class="muted">{{ tr('help.invitation_code_required') }}</p>
+      <button type="submit">{{ tr('action.accept_invitation') }}</button>
+    </form>
+
+    <form class="stack data-panel" method="post" action="/{{ locale }}/invitations/{{ invitation.id }}/reject">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ invitation.case_revision }}">
+      <label>
+        <span>{{ tr('field.invitation_code') }}</span>
+        <input type="password" name="invitation_code" autocomplete="one-time-code" required>
+      </label>
+      <p class="muted">{{ tr('help.reject_invitation') }}</p>
+      <button class="button-secondary" type="submit">{{ tr('action.reject_invitation') }}</button>
+    </form>
+  </div>
+  {% elif invitation_state == 'ACCEPTED' %}
+  <p><a class="button" href="/{{ locale }}/cases/{{ invitation.case_id }}/json-a/import">{{ tr('action.import_json_a') }}</a></p>
+  {% endif %}
+</section>
+{% endblock %}

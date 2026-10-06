@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.delivery_review') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<section class="card stack">
+  <header class="section-heading">
+    <div><p class="eyebrow">{{ tr('document.delivery') }}</p><h1>{{ tr('page.delivery_review') }}</h1></div>
+    <span class="status-chip">{{ tr('status.' ~ view.state|lower) }}</span>
+  </header>
+  <aside class="readonly-banner"><strong>{{ tr('notice.delivery_formal_bound') }}</strong><span>{{ tr('notice.no_implied_acceptance') }}</span></aside>
+  <p class="muted">{{ tr('notice.delivery_version_limit') }}</p>
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ view.formal.case.id }}</code></dd></div>
+    <div><dt>{{ tr('field.candidate_id') }}</dt><dd><code>{{ view.formal.candidate.id }}</code></dd></div>
+    <div><dt>{{ tr('field.assigned_role') }}</dt><dd>{{ tr('role.owner') if view.role == 'client' else tr('role.contractor') }}</dd></div>
+    <div><dt>{{ tr('field.action') }}</dt><dd><a href="/{{ locale }}/cases/{{ view.formal.case.id }}/formal">{{ tr('action.open_formal_verification') }}</a></dd></div>
+  </dl>
+
+  {% if view.role == 'contractor' and view.state in ('FORMAL', 'REMEDIATION') and not view.delivery_limit_reached %}
+  <form method="post" action="/{{ locale }}/cases/{{ view.formal.case.id }}/deliveries" class="data-panel stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ delivery_idempotency_key }}">
+    <h2>{{ tr('action.submit_delivery') if view.state == 'FORMAL' else tr('action.submit_reinspection') }}</h2>
+    <label>{{ tr('field.delivery_summary') }}<textarea name="summary" required maxlength="4000"></textarea></label>
+    {% for criterion in view.criteria %}
+    <fieldset><legend><span data-user-content>{{ criterion.description }}</span></legend>
+      <p class="muted"><span data-user-content>{{ criterion.verification_method }}</span></p>
+      <label>{{ tr('field.delivery_note') }}<textarea name="note_{{ criterion.criterion_id }}" required maxlength="4000"></textarea></label>
+      <label>{{ tr('field.evidence_reference') }}<input name="evidence_{{ criterion.criterion_id }}" required maxlength="1000"></label>
+      <label>{{ tr('field.test_outcome') }}<select name="test_outcome_{{ criterion.criterion_id }}"><option value="PASS">{{ tr('result.pass') }}</option><option value="FAIL">{{ tr('result.fail') }}</option><option value="NOT_RUN">{{ tr('result.not_run') }}</option></select></label>
+      <label>{{ tr('field.test_observation') }}<textarea name="observation_{{ criterion.criterion_id }}" required maxlength="4000"></textarea></label>
+    </fieldset>
+    {% endfor %}
+    <button>{{ tr('action.submit_delivery') if view.state == 'FORMAL' else tr('action.submit_reinspection') }}</button>
+  </form>
+  {% endif %}
+
+  {% if view.state == 'REMEDIATION' and view.delivery_limit_reached %}
+  <aside class="readonly-banner"><strong>{{ tr('notice.delivery_limit_reached') }}</strong><span>{{ tr('notice.delivery_limit_next_step') }}</span></aside>
+  {% endif %}
+
+  {% if view.deliveries %}
+  <section class="data-panel stack"><h2>{{ tr('page.delivery_history') }}</h2>
+    {% for detail in view.deliveries %}
+    <article><h3>{{ tr('document.delivery') }} {{ detail.row.version_no }} · {{ tr('kind.' ~ detail.row.kind|lower) }}</h3>
+      <p><span data-user-content>{{ detail.row.summary }}</span></p>
+      <p>{{ tr('field.delivery_due') }}: {{ detail.row.review_due_at }} · <a href="/{{ locale }}/cases/{{ view.formal.case.id }}/deliveries/{{ detail.row.id }}/download">{{ tr('action.download_delivery') }}</a></p>
+      <div class="table-scroll" role="region" aria-label="{{ tr('page.delivery_history') }} · {{ tr('document.delivery') }} {{ detail.row.version_no }}" tabindex="0">
+      <table class="delivery-table"><thead><tr><th>{{ tr('field.acceptance_criteria') }}</th><th>{{ tr('field.verification_method') }}</th><th>{{ tr('field.delivery_note') }}</th><th>{{ tr('field.evidence_reference') }}</th><th>{{ tr('field.test_outcome') }}</th><th>{{ tr('field.test_observation') }}</th></tr></thead><tbody>
+      {% for item in detail['items'] %}<tr><td data-user-content>{{ item.description }}</td><td data-user-content>{{ item.verification_method }}</td><td data-user-content>{{ item.delivery_note }}</td><td data-user-content>{{ item.evidence_reference }}</td><td>{{ tr('result.' ~ detail.tests[loop.index0].outcome|lower) }}</td><td data-user-content>{{ detail.tests[loop.index0].observation }}</td></tr>{% endfor %}
+      </tbody></table>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if view.inspections %}
+  <section class="data-panel stack"><h2>{{ tr('page.inspection_history') }}</h2>
+    {% for detail in view.inspections %}<article><h3>{{ tr('page.inspection') }} {{ detail.row.round_no }} · {{ tr('kind.' ~ detail.row.kind|lower) }} · {{ tr('result.' ~ detail.row.decision|lower) }}</h3>
+      <p>{{ tr('field.created_at') }}: {{ detail.row.inspected_at }} · {{ tr('field.explicit_acceptance') }}: {{ tr('choice.yes') if detail.row.explicit_acceptance else tr('choice.no') }}</p>
+      <table><thead><tr><th>{{ tr('field.acceptance_criteria') }}</th><th>{{ tr('field.inspection_result') }}</th><th>{{ tr('field.return_reason') }}</th></tr></thead><tbody>
+      {% for result in detail.results %}<tr><td data-user-content>{{ view.criteria_by_id[result.criterion_id].description }}</td><td>{{ tr('result.' ~ result.result|lower) }}</td><td data-user-content>{{ result.reason or '' }}</td></tr>{% endfor %}
+      </tbody></table>
+    </article>{% endfor %}
+  </section>
+  {% endif %}
+
+  {% if view.acceptance %}<section class="data-panel stack"><h2>{{ tr('notice.explicit_acceptance_recorded') }}</h2><dl class="identity-grid">
+    <div><dt>{{ tr('field.delivery_id') }}</dt><dd><code>{{ view.acceptance.delivery_id }}</code></dd></div>
+    <div><dt>{{ tr('field.inspection_id') }}</dt><dd><code>{{ view.acceptance.inspection_id }}</code></dd></div>
+    <div><dt>{{ tr('field.accepted_by') }}</dt><dd><code>{{ view.acceptance.accepted_by_id }}</code></dd></div>
+    <div><dt>{{ tr('field.created_at') }}</dt><dd>{{ view.acceptance.accepted_at }}</dd></div>
+    <div><dt>{{ tr('field.sha256') }}</dt><dd><code>{{ view.acceptance.evidence_sha256 }}</code></dd></div>
+  </dl></section>{% endif %}
+
+  {% if view.role == 'client' and view.state == 'DELIVERED' %}
+  <form method="post" action="/{{ locale }}/cases/{{ view.formal.case.id }}/deliveries/{{ view.workflow.current_delivery_id }}/begin-inspection">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ view.revision }}">
+    <button>{{ tr('action.begin_inspection') }}</button>
+  </form>
+  {% endif %}
+
+  {% if view.role == 'client' and view.state in ('UNDER_ACCEPTANCE', 'REINSPECTION') %}
+  <form method="post" action="/{{ locale }}/cases/{{ view.formal.case.id }}/deliveries/{{ view.workflow.current_delivery_id }}/inspections" class="data-panel stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ view.revision }}"><input type="hidden" name="idempotency_key" value="{{ inspection_idempotency_key }}">
+    <h2>{{ tr('page.inspection') }}</h2>
+    {% for criterion in view.criteria %}<fieldset><legend data-user-content>{{ criterion.description }}</legend>
+      <label>{{ tr('field.inspection_result') }}<select name="result_{{ criterion.criterion_id }}"><option value="PASS">{{ tr('result.pass') }}</option><option value="RETURNED">{{ tr('result.returned') }}</option></select></label>
+      <label>{{ tr('field.return_reason') }}<textarea name="reason_{{ criterion.criterion_id }}" maxlength="4000"></textarea></label>
+    </fieldset>{% endfor %}
+    <label><input type="checkbox" name="explicit_acceptance" value="yes"> {{ tr('notice.explicit_acceptance') }}</label>
+    <button>{{ tr('action.submit_inspection') }}</button>
+  </form>
+  {% endif %}
+
+  {% if view.state in ('DELIVERED', 'UNDER_ACCEPTANCE', 'REMEDIATION', 'REINSPECTION') %}
+  <form method="post" action="/{{ locale }}/cases/{{ view.formal.case.id }}/disputes" class="data-panel stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ view.revision }}">
+    <h2>{{ tr('page.dispute_record') }}</h2><p>{{ tr('notice.no_platform_adjudication') }}</p>
+    <label>{{ tr('field.dispute_reason') }}<textarea name="reason" required maxlength="4000"></textarea></label>
+    <button class="button-danger">{{ tr('action.open_dispute') }}</button>
+  </form>
+  {% endif %}
+
+  {% if view.state == 'DISPUTED' %}
+  <section class="data-panel stack"><h2>{{ tr('page.dispute_record') }}</h2><p data-user-content>{{ view.dispute.reason }}</p><p>{{ tr('notice.no_platform_adjudication') }}</p>
+    {% for position in view.positions %}<p><strong>{{ tr('role.owner') if position.actor_role == 'client' else tr('role.contractor') }}</strong>: <span data-user-content>{{ position.position_text }}</span></p>{% endfor %}
+    {% if not view.own_position %}
+    <form method="post" action="/{{ locale }}/cases/{{ view.formal.case.id }}/disputes/{{ view.dispute.id }}/positions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>{{ tr('field.final_position') }}<textarea name="position_text" required maxlength="4000"></textarea></label><button>{{ tr('action.submit_position') }}</button>
+    </form>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if view.state in ('ACCEPTED', 'DISPUTED') %}
+  <section class="data-panel stack"><h2>{{ tr('document.evidence_export') }}</h2><p>{{ tr('notice.evidence_scope') }}</p>
+    <form method="post" action="/{{ locale }}/cases/{{ view.formal.case.id }}/evidence-exports"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>{{ tr('action.export_evidence') }}</button></form>
+    {% for export in view.exports %}<p>{{ tr('document.evidence_export') }} {{ export.version_no }} · <a href="/{{ locale }}/cases/{{ view.formal.case.id }}/evidence-exports/{{ export.id }}/download">{{ tr('action.download_evidence') }}</a> · <code>{{ export.sha256 }}</code></p>{% endfor %}
+  </section>
+  {% endif %}
+
+  {% if view.events %}<section class="data-panel"><h2>{{ tr('page.evidence_timeline') }}</h2><ol>{% for event in view.events %}<li>{{ tr('event.' ~ event.event_code|lower) }} · {{ event.occurred_at }}{% if event.effective_at %} · {{ event.effective_at }}{% endif %}</li>{% endfor %}</ol></section>{% endif %}
+</section>
+{% endblock %}

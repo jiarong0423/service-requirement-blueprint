@@ -1,0 +1,21 @@
+{
+  "pdf": [
+    "pdf.title",
+    "pdf.scope",
+    "pdf.fees",
+    "pdf.responsibilities",
+    "pdf.milestones",
+    "pdf.acceptance",
+    "pdf.maintenance",
+    "pdf.blueprint",
+    "pdf.integrity",
+    "pdf.fixed_original_notice"
+  ],
+  "schema_version": "gate0-document-label-map/1.0",
+  "svg": [
+    "svg.requirement",
+    "svg.proposal",
+    "svg.candidate",
+    "svg.fixed_snapshot"
+  ]
+}

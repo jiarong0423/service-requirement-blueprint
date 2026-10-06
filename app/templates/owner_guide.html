@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card narrow"><p class="eyebrow">01–08</p><h1>{{ tr('page.owner_guide') }}</h1><p>{{ tr('guide.intro') }}</p>
+<form method="post" action="/{{ locale }}/owner/requirements"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>{{ tr('field.working_name') }}<input name="title" maxlength="200" required></label><button>{{ tr('action.create_draft') }}</button></form>
+</section>
+{% endblock %}

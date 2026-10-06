@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.candidate_review') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<section class="card stack">
+  <header class="section-heading">
+    <div><p class="eyebrow">{{ tr('document.candidate') }}</p><h1>{{ tr('page.candidate_review') }} {{ candidate.version_no }}</h1></div>
+    <span class="status-chip">{% if candidate.state == 'FORMAL' %}{{ tr('status.formal') }}{% elif candidate.state == 'INVALIDATED' %}{{ tr('status.invalidated') }}{% else %}{{ tr('status.candidate_review') }}{% endif %}</span>
+  </header>
+  {% if candidate.state == 'CURRENT' %}
+  <aside class="readonly-banner"><strong>{{ tr('notice.candidate_not_formal') }}</strong><span>{{ tr('notice.candidate_same_saved_bytes') }}</span></aside>
+  {% elif candidate.state == 'INVALIDATED' %}
+  <aside class="readonly-banner"><strong>{{ tr('notice.revision_invalidates_candidate') }}</strong><span>{{ tr('notice.candidate_same_saved_bytes') }}</span></aside>
+  {% else %}
+  <aside class="readonly-banner"><strong>{{ tr('notice.formal_same_saved_bytes') }}</strong></aside>
+  {% endif %}
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ candidate.case_id }}</code></dd></div>
+    <div><dt>{{ tr('field.candidate_id') }}</dt><dd><code>{{ candidate.id }}</code></dd></div>
+    <div><dt>{{ tr('field.round_revision') }}</dt><dd>{{ review_round.revision }}</dd></div>
+    <div><dt>{{ tr('field.created_at') }}</dt><dd>{{ candidate.created_at }}</dd></div>
+    <div><dt>{{ tr('field.json_a_sha256') }}</dt><dd class="hash"><code>{{ candidate.json_a_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.json_b_sha256') }}</dt><dd class="hash"><code>{{ candidate.json_b_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.manifest_sha256') }}</dt><dd class="hash"><code>{{ candidate.manifest_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.pdf_sha256') }}</dt><dd class="hash"><code>{{ candidate.pdf_sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.svg_sha256') }}</dt><dd class="hash"><code>{{ candidate.svg_sha256 }}</code></dd></div>
+  </dl>
+  <p class="inline-actions">
+    <a class="button" href="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/document.pdf">{{ tr('action.open_candidate_pdf') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/document.pdf?download=1">{{ tr('action.download_candidate_pdf') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/manifest.json">{{ tr('action.download_manifest') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/diagram.svg">{{ tr('action.open_candidate_svg') }}</a>
+    <a class="button button-secondary" href="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/diagram.svg?download=1">{{ tr('action.download_candidate_svg') }}</a>
+  </p>
+  <img class="blueprint" src="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/diagram.svg" alt="{{ tr('document.blueprint') }}">
+  <section class="data-panel stack" aria-labelledby="confirmation-heading">
+    <h2 id="confirmation-heading">{{ tr('page.confirmation_status') }}</h2>
+    <p>{{ tr('notice.no_implied_confirmation') }}</p>
+    <dl class="identity-grid">
+      {% for role in ('client', 'contractor') %}
+      <div>
+        <dt>{{ tr('field.client') if role == 'client' else tr('field.contractor') }}</dt>
+        <dd>
+          {% set acknowledgement = acknowledgement_by_role.get(role) %}
+          {% set confirmation = confirmation_by_role.get(role) %}
+          {{ tr('status.acknowledged') if acknowledgement else tr('status.not_acknowledged') }}{% if acknowledgement %} · {{ acknowledgement.acknowledged_at }}{% endif %}<br>
+          {% if confirmation %}{% if confirmation.state == 'CURRENT' %}{{ tr('status.confirmed') }} · {{ confirmation.confirmed_at }}{% elif confirmation.state == 'FORMALIZED' %}{{ tr('status.formal') }} · {{ confirmation.formalized_at }}{% elif confirmation.state == 'WITHDRAWN' %}{{ tr('status.confirmation_withdrawn') }} · {{ confirmation.withdrawn_at }}{% else %}{{ tr('status.invalidated') }}{% endif %}{% else %}{{ tr('status.not_confirmed') }}{% endif %}
+        </dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+  {% if candidate.state == 'CURRENT' and review_round.state == 'OPEN' and case.state == 'CANDIDATE_REVIEW' %}
+    {% if not own_acknowledgement %}
+    <form method="post" action="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/acknowledgements" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ review_round.revision }}">
+      <label><input type="checkbox" name="acknowledged" value="yes" required> {{ tr('notice.manifest_acknowledgement_statement') }}</label>
+      <button>{{ tr('action.acknowledge_manifest') }}</button>
+    </form>
+    {% elif not own_confirmation or own_confirmation.state in ('WITHDRAWN', 'INVALIDATED') %}
+    <form method="post" action="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/confirmations" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ review_round.revision }}">
+      <label><input type="checkbox" name="confirmed" value="yes" required> {{ tr('notice.confirmation_statement') }}</label>
+      <button>{{ tr('action.confirm_version') }}</button>
+    </form>
+    {% elif own_confirmation.state == 'CURRENT' %}
+    <p>{{ tr('notice.one_confirmation_pending') }}</p>
+    <form method="post" action="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/confirmations/withdraw">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ review_round.revision }}">
+      <button class="button-secondary">{{ tr('action.withdraw_confirmation') }}</button>
+    </form>
+    {% endif %}
+    <details>
+      <summary>{{ tr('action.request_candidate_revision') }}</summary>
+      <form method="post" action="/{{ locale }}/cases/{{ case_id }}/candidates/{{ candidate.id }}/revision-requests" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="expected_revision" value="{{ review_round.revision }}">
+        <label>{{ tr('field.revision_reason') }}<textarea name="reason" maxlength="4000" required></textarea></label>
+        <button class="button-secondary">{{ tr('action.request_candidate_revision') }}</button>
+      </form>
+    </details>
+  {% elif candidate.state == 'FORMAL' %}
+  <p><a class="button" href="/{{ locale }}/cases/{{ case_id }}/formal">{{ tr('action.open_formal_verification') }}</a></p>
+  {% endif %}
+  <p><a href="/{{ locale }}/cases/{{ case_id }}">{{ tr('action.open_private_case') }}</a></p>
+</section>
+{% endblock %}

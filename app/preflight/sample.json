@@ -1,0 +1,24 @@
+{
+  "amount": 650,
+  "currency_code": "XTS",
+  "diagram": {
+    "edges": [
+      [
+        "requirement",
+        "proposal"
+      ],
+      [
+        "proposal",
+        "candidate"
+      ]
+    ],
+    "nodes": [
+      "requirement",
+      "proposal",
+      "candidate"
+    ]
+  },
+  "project_name": "Community Studio Website",
+  "schema_version": "gate0-sample/1.1",
+  "user_content": "Café résumé — user-authored text remains unchanged."
+}

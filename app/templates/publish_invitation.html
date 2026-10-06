@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% set invitation_state = invitation.state|upper if invitation else '' %}
+{% block title %}{{ tr('page.publish_invitation') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<div class="progress">{{ tr('case.private') }} · {{ tr('status.owner_private_draft') }}</div>
+<section class="card stack">
+  <header>
+    <p class="eyebrow">{{ tr('page.publish_invitation') }}</p>
+    <h1 data-user-content>{{ case.title }}</h1>
+    <p>{{ tr('notice.invitation_private') }}</p>
+  </header>
+
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ case.id }}</code></dd></div>
+    <div><dt>{{ tr('field.json_a_version') }}</dt><dd>{{ artifact.version_no }}</dd></div>
+    <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ artifact.sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.byte_length') }}</dt><dd>{{ artifact.byte_length }}</dd></div>
+  </dl>
+
+  {% if invitation %}
+  <section class="data-panel stack" aria-labelledby="invitation-status-heading">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">{{ tr('field.invitation_status') }}</p>
+        <h2 id="invitation-status-heading">
+          {% if invitation_state == 'PENDING' %}{{ tr('status.invitation_pending') }}
+          {% elif invitation_state == 'ACCEPTED' %}{{ tr('status.invitation_accepted') }}
+          {% elif invitation_state == 'REJECTED' %}{{ tr('status.invitation_rejected') }}
+          {% elif invitation_state == 'REVOKED' %}{{ tr('status.invitation_revoked') }}
+          {% elif invitation_state == 'EXPIRED' %}{{ tr('status.invitation_expired') }}
+          {% else %}{{ tr('error.invitation_invalid') }}{% endif %}
+        </h2>
+      </div>
+      <span class="status-chip">
+        {% if invitation_state == 'PENDING' %}{{ tr('status.invitation_pending') }}
+        {% elif invitation_state == 'ACCEPTED' %}{{ tr('status.invitation_accepted') }}
+        {% elif invitation_state == 'REJECTED' %}{{ tr('status.invitation_rejected') }}
+        {% elif invitation_state == 'REVOKED' %}{{ tr('status.invitation_revoked') }}
+        {% elif invitation_state == 'EXPIRED' %}{{ tr('status.invitation_expired') }}
+        {% else %}{{ tr('error.invitation_invalid') }}{% endif %}
+      </span>
+    </div>
+    <dl class="identity-grid">
+      <div><dt>{{ tr('field.contractor') }}</dt><dd data-user-content>{{ invitation.invited_display_name }}</dd></div>
+      <div><dt>{{ tr('field.email') }}</dt><dd>{{ invitation.invited_email_normalized }}</dd></div>
+      <div><dt>{{ tr('field.invitation_expiry') }}</dt><dd>{{ invitation.expires_at }}</dd></div>
+      <div><dt>{{ tr('field.json_a_version') }}</dt><dd>{{ invitation.json_a_version_no }}</dd></div>
+    </dl>
+
+    {% if invitation_url and invitation_code %}
+    <aside class="notice notice-warning stack" aria-labelledby="handoff-heading">
+      <h3 id="handoff-heading">{{ tr('notice.manual_handoff_heading') }}</h3>
+      <p>{{ tr('notice.manual_handoff') }}</p>
+      <p><strong>{{ tr('field.invitation_link') }}</strong></p>
+      <p class="code-panel"><code>{{ invitation_url }}</code></p>
+      <p><strong>{{ tr('field.invitation_code') }}</strong></p>
+      <p class="code-panel code-value"><code>{{ invitation_code }}</code></p>
+      <p>{{ tr('notice.invitation_code_once') }}</p>
+      <p>{{ tr('notice.invitation_code_not_in_url') }}</p>
+    </aside>
+    {% endif %}
+
+    {% if invitation_state == 'PENDING' %}
+    <form method="post" action="/{{ locale }}/owner/requirements/{{ case.id }}/invitations/{{ invitation.id }}/revoke">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
+      <button class="button-danger" type="submit">{{ tr('action.revoke_invitation') }}</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if preview %}
+  <section class="data-panel stack" aria-labelledby="preview-heading">
+    <div>
+      <p class="eyebrow">{{ tr('page.invitation_preview') }}</p>
+      <h2 id="preview-heading">{{ tr('notice.source_matches_registered') }}</h2>
+    </div>
+    <dl class="summary-list" data-user-content>
+      <div><dt>{{ tr('field.project_name') }}</dt><dd>{{ preview.project_name }}</dd></div>
+      <div><dt>{{ tr('field.primary_purpose') }}</dt><dd>{{ preview.primary_purpose }}</dd></div>
+      <div><dt>{{ tr('field.unresolved_items') }}</dt><dd>{{ preview.unresolved_count }}</dd></div>
+    </dl>
+    <form class="stack" method="post" action="/{{ locale }}/owner/requirements/{{ case.id }}/invitations" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
+      <input type="hidden" name="expected_artifact_id" value="{{ preview.artifact_id }}">
+      <input type="hidden" name="expected_sha256" value="{{ preview.sha256 }}">
+      <label>
+        <span>{{ tr('field.json_a_file') }}</span>
+        <input class="file-input" type="file" name="json_a_file" accept="application/json,.json" required>
+      </label>
+      <p class="muted">{{ tr('help.upload_exact_registered_json_a_again') }}</p>
+      <label>
+        <span>{{ tr('field.contractor_email') }}</span>
+        <input type="email" name="contractor_email" autocomplete="email" required>
+      </label>
+      <p class="muted">{{ tr('help.contractor_existing_account') }}</p>
+      <p class="notice">{{ tr('notice.invitation_seven_days') }}</p>
+      <button type="submit">{{ tr('action.create_invitation') }}</button>
+    </form>
+  </section>
+  {% elif not invitation or invitation_state in ('REJECTED', 'REVOKED', 'EXPIRED') %}
+  <form class="stack" method="post" action="/{{ locale }}/owner/requirements/{{ case.id }}/publish/preview" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
+    <label>
+      <span>{{ tr('field.json_a_file') }}</span>
+      <input class="file-input" type="file" name="json_a_file" accept="application/json,.json" required>
+    </label>
+    <p class="muted">{{ tr('help.upload_exact_registered_json_a') }}</p>
+    <button type="submit">{{ tr('action.preview_json_a') }}</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,29 @@
+{
+  "build_command": "python tools/build_gate0_fonts.py --source-font SOURCE.ttf --license-file OFL.txt --output-dir assets/fonts --source-url PINNED_URL --source-commit PINNED_COMMIT",
+  "family": "Noto Sans TC",
+  "fonttools_version": "4.66.1",
+  "license": "SIL Open Font License 1.1",
+  "outputs": {
+    "NotoSansTC-Bold.ttf": {
+      "bytes": 7143748,
+      "postscript_name": "NotoSansTC-Bold",
+      "sha256": "53a904468a841686766fcb1c09883df0994ca8913c3532ec2ebd37d7a327db56",
+      "weight": 700
+    },
+    "NotoSansTC-Regular.ttf": {
+      "bytes": 7149216,
+      "postscript_name": "NotoSansTC-Regular",
+      "sha256": "9d25b818ac73b85f4ee6c7b5dbe7b64bb4f6900f1f83595eb195f487db36e10e",
+      "weight": 400
+    },
+    "OFL.txt": {
+      "bytes": 4388,
+      "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+    }
+  },
+  "schema_version": "gate0-font-source/1.0",
+  "source_bytes": 11941968,
+  "source_commit": "b950a7257470b900078f2bf3223823a8602de7e1",
+  "source_sha256": "864727d210d54f2537bbe23b3a839436c3992af72de9322af5270897246bd44f",
+  "source_url": "https://raw.githubusercontent.com/google/fonts/b950a7257470b900078f2bf3223823a8602de7e1/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf"
+}

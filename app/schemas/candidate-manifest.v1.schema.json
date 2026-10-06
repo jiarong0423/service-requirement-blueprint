@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/schemas/candidate-manifest.v1.schema.json",
+  "title": "Candidate document bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "candidate_id", "case_id", "version", "created_at", "label_mode", "template_version", "sources", "catalog", "label_map", "fonts", "artifacts"],
+  "properties": {
+    "schema_version": {"const": "candidate-manifest/1.0"},
+    "status": {"const": "candidate"},
+    "candidate_id": {"type": "string", "format": "uuid"},
+    "case_id": {"type": "string", "format": "uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "label_mode": {"const": "english_only"},
+    "template_version": {"enum": ["candidate-document/1.0", "candidate-document/1.1"]},
+    "sources": {
+      "type": "object", "additionalProperties": false, "required": ["json_a", "json_b"],
+      "properties": {"json_a": {"$ref": "#/$defs/source"}, "json_b": {"$ref": "#/$defs/source"}}
+    },
+    "catalog": {"$ref": "#/$defs/catalog"},
+    "label_map": {"$ref": "#/$defs/label_map"},
+    "fonts": {
+      "type": "object", "additionalProperties": false, "required": ["regular", "bold", "license", "provenance"],
+      "properties": {
+        "regular": {"$ref": "#/$defs/file"}, "bold": {"$ref": "#/$defs/file"},
+        "license": {"$ref": "#/$defs/file"}, "provenance": {"$ref": "#/$defs/file"}
+      }
+    },
+    "artifacts": {
+      "type": "object", "additionalProperties": false, "required": ["pdf", "svg"],
+      "properties": {
+        "pdf": {"allOf": [{"$ref": "#/$defs/file"}, {"properties": {"filename": {"const": "document.pdf"}, "media_type": {"const": "application/pdf"}}}]},
+        "svg": {"allOf": [{"$ref": "#/$defs/file"}, {"properties": {"filename": {"const": "diagram.svg"}, "media_type": {"const": "image/svg+xml"}}}]}
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_id", "document_id", "version", "schema_version", "sha256", "byte_length"],
+      "properties": {
+        "artifact_id": {"type": "string", "format": "uuid"}, "document_id": {"type": "string", "format": "uuid"},
+        "version": {"type": "integer", "minimum": 1}, "schema_version": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/digest"}, "byte_length": {"type": "integer", "minimum": 1}
+      }
+    },
+    "file": {
+      "type": "object", "additionalProperties": false, "required": ["filename", "media_type", "sha256", "byte_length"],
+      "properties": {
+        "filename": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}, "media_type": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/digest"}, "byte_length": {"type": "integer", "minimum": 1}
+      }
+    },
+    "catalog": {
+      "type": "object", "additionalProperties": false, "required": ["locale", "filename", "media_type", "sha256", "byte_length"],
+      "properties": {
+        "locale": {"const": "en"}, "filename": {"const": "catalog.en.json"}, "media_type": {"const": "application/json"},
+        "sha256": {"$ref": "#/$defs/digest"}, "byte_length": {"type": "integer", "minimum": 1}
+      }
+    },
+    "label_map": {
+      "type": "object", "additionalProperties": false, "required": ["schema_version", "filename", "media_type", "sha256", "byte_length"],
+      "properties": {
+        "schema_version": {"const": "candidate-label-map/1.0"}, "filename": {"const": "candidate-labels.v1.json"}, "media_type": {"const": "application/json"},
+        "sha256": {"$ref": "#/$defs/digest"}, "byte_length": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

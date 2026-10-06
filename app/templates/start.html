@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">{{ tr('case.private') }}</p>
+  <h1>{{ tr('start.heading') }}</h1>
+  <p>{{ tr('start.summary') }}</p>
+  {% if g.user %}
+    <a class="button" href="/{{ locale }}/owner/guide">{{ tr('action.start_requirement') }}</a>
+  {% else %}
+    <a class="button" href="/{{ locale }}/login">{{ tr('action.sign_in') }}</a>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.json_a_import') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<div class="progress">{{ tr('status.waiting_json_a_import') }}</div>
+<section class="card narrow stack">
+  <header>
+    <p class="eyebrow">{{ tr('role.contractor') }}</p>
+    <h1>{{ tr('page.json_a_import') }}</h1>
+    <p data-user-content>{{ case.title }}</p>
+  </header>
+
+  <aside class="notice">
+    <strong>{{ tr('notice.exact_json_a_required') }}</strong>
+    <p>{{ tr('notice.import_does_not_trust_authority') }}</p>
+  </aside>
+
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ case.id }}</code></dd></div>
+    <div><dt>{{ tr('field.json_a_version') }}</dt><dd>{{ source.version_no }}</dd></div>
+    <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ source.sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.byte_length') }}</dt><dd>{{ source.byte_length }}</dd></div>
+  </dl>
+
+  <form class="stack" method="post" action="/{{ locale }}/cases/{{ case.id }}/json-a/import" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
+    <label>
+      <span>{{ tr('field.json_a_file') }}</span>
+      <input class="file-input" type="file" name="json_a_file" accept="application/json,.json" required>
+    </label>
+    <p class="muted">{{ tr('help.contractor_exact_json_a') }}</p>
+    <button type="submit">{{ tr('action.verify_json_a') }}</button>
+  </form>
+</section>
+{% endblock %}

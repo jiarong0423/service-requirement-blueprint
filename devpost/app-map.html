@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service Requirement Blueprint · App Map</title>
+  <style>
+    :root{color-scheme:light;--paper:#f7f4ea;--card:#fffdf6;--ink:#173b2e;--muted:#52685f;--green:#315848;--amber:#a16b18;--line:#c9d4ca;--code:#eef2ed}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(1040px,92vw);margin:2.5rem auto 4rem}header,.panel{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:clamp(1.2rem,4vw,2.5rem);box-shadow:0 12px 40px rgba(23,59,46,.06)}header{margin-bottom:1.5rem}h1,h2,h3{line-height:1.2;margin-top:0}h1{font-size:clamp(2rem,6vw,3.6rem)}h2{font-size:1.55rem}.eyebrow{color:var(--amber);font-weight:800;letter-spacing:.08em;text-transform:uppercase}.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.5rem;margin-top:1.5rem}.panel{min-width:0}.wide{grid-column:1/-1}code{background:var(--code);border-radius:5px;padding:.1em .35em;overflow-wrap:anywhere}pre{margin:0;white-space:pre-wrap;overflow:auto;background:#10251d;color:#eaf3ed;padding:1rem;border-radius:10px}ol,ul{padding-left:1.3rem}li+li{margin-top:.7rem}.route{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.8rem;margin-top:1rem}.stop{border:1px solid var(--line);border-radius:12px;padding:1rem;background:#f1f4ee;min-width:0}.stop strong{display:block;margin-bottom:.45rem}.diagram{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:14px;background:white}.diagram text{font-family:Inter,ui-sans-serif,system-ui,sans-serif;fill:var(--ink)}.diagram .box{fill:#eef2ed;stroke:var(--green);stroke-width:2}.diagram .result{fill:#fff3d9;stroke:var(--amber);stroke-width:2}.diagram .arrow{stroke:var(--green);stroke-width:2;fill:none;marker-end:url(#arrow)}.diagram .small{font-size:14px;fill:var(--muted)}a{color:var(--green)}footer{margin-top:1.5rem;color:var(--muted)}@media(max-width:760px){.grid,.route{grid-template-columns:1fr}.wide{grid-column:auto}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Post-build reference</p>
+    <h1>Service Requirement Blueprint</h1>
+    <p>A local English-only proof of concept that helps one client and one contractor turn requirements into a fixed agreement, record delivery and explicit acceptance, and export verifiable evidence without exposing private drafts.</p>
+    <p class="muted">Functional source: responsive implementation commit <code>e7b7306</code>; this offline map was added in <code>c182197</code>. Later 6-ship commits update documentation, licensing, and release evidence without changing the mapped delivery workflow.</p>
+  </header>
+
+  <section class="panel wide" aria-labelledby="flow-heading">
+    <h2 id="flow-heading">One real action: submit and review a delivery</h2>
+    <svg class="diagram" viewBox="0 0 960 260" role="img" aria-labelledby="diagram-title diagram-description">
+      <title id="diagram-title">Delivery submission code route</title>
+      <desc id="diagram-description">The localized Flask route validates the request, the delivery workflow writes immutable records in SQLite and controlled storage, and the dashboard renders the same history for the bound parties.</desc>
+      <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#315848"></path></marker></defs>
+      <rect class="box" x="35" y="55" width="250" height="140" rx="14"></rect>
+      <text x="55" y="88" font-size="18" font-weight="700">1. Request entry</text><text class="small" x="55" y="118">localized.py</text><text class="small" x="55" y="144">delivery_submit()</text><text class="small" x="55" y="170">Role, CSRF, revision</text>
+      <path class="arrow" d="M285 125 H355"></path>
+      <rect class="box" x="355" y="55" width="250" height="140" rx="14"></rect>
+      <text x="375" y="88" font-size="18" font-weight="700">2. State and evidence</text><text class="small" x="375" y="118">delivery_workflow.py</text><text class="small" x="375" y="144">submit_delivery()</text><text class="small" x="375" y="170">SQLite + fixed JSON bytes</text>
+      <path class="arrow" d="M605 125 H675"></path>
+      <rect class="result" x="675" y="55" width="250" height="140" rx="14"></rect>
+      <text x="695" y="88" font-size="18" font-weight="700">3. Visible result</text><text class="small" x="695" y="118">delivery_dashboard.html</text><text class="small" x="695" y="144">Immutable history</text><text class="small" x="695" y="170">Download and inspection UI</text>
+    </svg>
+  </section>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="route-heading">
+      <h2 id="route-heading">Three-stop reference route</h2>
+      <div class="route">
+        <article class="stop"><strong>Input</strong><code>app/routes/localized.py</code><p>Search for <code>delivery_submit</code>. This POST boundary reads form data and passes server-owned identity to the workflow.</p></article>
+        <article class="stop"><strong>Rules and storage</strong><code>app/services/delivery_workflow.py</code><p>Search for <code>submit_delivery</code>. This validates the formal case, exact criteria, idempotency, version cap, database transaction, and fixed record.</p></article>
+        <article class="stop"><strong>Output and proof</strong><code>app/templates/delivery_dashboard.html</code><p>Search for <code>page.delivery_history</code>. The page renders prior versions without rewriting them. The end-to-end proof starts at <code>test_return_remediation_reinspection_acceptance_and_export</code>.</p></article>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="pieces-heading">
+      <h2 id="pieces-heading">Main pieces</h2>
+      <ul>
+        <li><strong>Routes:</strong> <code>app/routes/localized.py</code> owns HTTP methods, CSRF boundaries, protected downloads, and English URLs.</li>
+        <li><strong>Workflow services:</strong> <code>app/services/</code> owns permission checks, transactions, immutable versions, candidate/formal evidence, delivery, and export verification.</li>
+        <li><strong>Database:</strong> <code>migrations/</code> defines append-only rows and transition guards in local SQLite.</li>
+        <li><strong>Controlled files:</strong> the runtime instance stores exact JSON, PDF, SVG, delivery, and evidence ZIP bytes outside Git.</li>
+        <li><strong>Presentation:</strong> <code>app/templates/</code>, <code>app/static/css/app.css</code>, and <code>app/i18n/catalog.en.json</code> render the English interface without owning business authority.</li>
+      </ul>
+    </section>
+
+    <section class="panel" aria-labelledby="change-heading">
+      <h2 id="change-heading">To change this, start here</h2>
+      <ul>
+        <li><strong>System wording:</strong> edit the existing key in <code>app/i18n/catalog.en.json</code>, then run the i18n contract tests.</li>
+        <li><strong>Delivery page layout:</strong> start at <code>app/templates/delivery_dashboard.html</code> and <code>app/static/css/app.css</code>.</li>
+        <li><strong>Delivery or acceptance rules:</strong> start at <code>app/services/delivery_workflow.py</code> and confirm the database guard in <code>migrations/006_slice7_delivery.sql</code>.</li>
+        <li><strong>Evidence ZIP contents:</strong> start at <code>app/services/evidence_export.py</code> and <code>app/schemas/evidence-export-manifest.v1.schema.json</code>.</li>
+        <li><strong>HTTP behavior:</strong> start at the named route in <code>app/routes/localized.py</code>; keep role and state decisions in the service layer.</li>
+      </ul>
+    </section>
+
+    <section class="panel" aria-labelledby="practice-heading">
+      <h2 id="practice-heading">A practice to reuse</h2>
+      <p>The narrow-table issue showed why an observable stop condition matters. “Make the table responsive” became measurable evidence: at a 789 CSS-pixel viewport, the body must not overflow, the table must scroll inside its labeled region, and ordinary English words must remain readable.</p>
+      <p>The implementation is anchored at <code>table-scroll</code> in <code>app/templates/delivery_dashboard.html</code> and the sizing rules in <code>app/static/css/app.css</code>. The regression guard is <code>test_delivery_history_uses_accessible_responsive_table_region</code> in <code>tests/test_slice7_delivery.py</code>.</p>
+      <p>On another project, use the same pattern: turn a visual complaint into a viewport, a measurable container boundary, and one automated contract before calling the repair complete.</p>
+    </section>
+
+    <section class="panel wide" aria-labelledby="run-heading">
+      <h2 id="run-heading">Run it again</h2>
+      <p>From the repository root, set the three documented demo-password environment variables with a no-echo mechanism, then initialize a new local demonstration instance only when one does not already exist:</p>
+      <pre><code>export DEMO_OWNER_PASSWORD DEMO_CONTRACTOR_PASSWORD DEMO_ADMIN_PASSWORD
+.venv/bin/python -m app.cli init-demo
+POC_LOCAL_HTTP=1 .venv/bin/python -m app</code></pre>
+      <p>Open <code>http://127.0.0.1:5000/</code>. The server is loopback-only. Generated accounts and case artifacts stay in the ignored local instance directory.</p>
+    </section>
+  </div>
+  <footer>Offline reference only. No analytics, remote assets, embedded credentials, or network dependency.</footer>
+</main>
+</body>
+</html>

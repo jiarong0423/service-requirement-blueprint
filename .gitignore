@@ -1,0 +1,70 @@
+/devpost/learner-profile.md
+/devpost/learner-profile.zh-TW.md
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.flaskenv
+.envrc
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+
+# Runtime state and generated case artifacts
+/instance/
+/output/
+/artifacts/
+/exports/
+/generated/
+/demo-data/
+/docs/ai-generated/
+*.generated.json
+*.candidate.pdf
+*.formal.pdf
+*.evidence.zip
+
+# SQLite databases and sidecars
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+*.wal
+*.shm
+
+# Python environments, bytecode, and tool caches
+/.venv/
+/venv/
+/build/
+/dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Local runtime records; canonical decision logs remain reviewable
+/logs/runtime/
+*.runtime.log
+
+# Editor and operating-system noise
+.DS_Store
+.idea/
+.vscode/

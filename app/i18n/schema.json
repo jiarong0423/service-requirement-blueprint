@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/i18n/catalog.schema.json",
+  "title": "Translation catalog",
+  "type": "object",
+  "minProperties": 1,
+  "additionalProperties": {
+    "type": "string",
+    "minLength": 1
+  }
+}

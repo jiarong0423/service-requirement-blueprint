@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block title %}{{ tr('page.json_b_review') }} · {{ tr('app.name') }}{% endblock %}
+{% block content %}
+<section class="card stack">
+  <header class="section-heading">
+    <div><p class="eyebrow">{{ tr('document.json_b') }}</p><h1>{{ tr('page.json_b_review') }} {{ review.version_no }}</h1></div>
+    <span class="status-chip">{{ review.state }}</span>
+  </header>
+  <p>{{ tr('notice.json_b_review_read_only') }}</p>
+  <dl class="identity-grid">
+    <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ review.sha256 }}</code></dd></div>
+    <div><dt>{{ tr('field.quote_expiry') }}</dt><dd>{{ review.quote_expires_at }}</dd></div>
+  </dl>
+  <p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/download">{{ tr('action.download_json_b') }}</a></p>
+  <div class="stack" aria-label="{{ tr('page.json_b_review') }}">
+    {% for field in review_fields %}
+    <section class="data-panel stack" data-review-field="{{ field.key }}">
+      <h2>{{ tr(field.label_key) }}</h2>
+      <pre data-user-content>{{ field.value|tojson(indent=2) }}</pre>
+      {% if case_role == 'client' and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' %}
+      <details>
+        <summary>{{ tr('action.raise_objection') }}</summary>
+        <form method="post" action="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/objections" class="stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="field_pointer" value="{{ field.pointer }}">
+          <label>{{ tr('field.objection_summary') }}<textarea name="summary" required></textarea></label>
+          <button>{{ tr('action.raise_objection') }}</button>
+        </form>
+      </details>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+  {% if case_role == 'contractor' and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' %}
+  <form method="post" action="/{{ locale }}/cases/{{ case.id }}/candidates">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button>{{ tr('action.create_candidate') }}</button>
+  </form>
+  <form method="post" action="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/revise">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button>{{ tr('action.request_revision') }}</button>
+  </form>
+  {% endif %}
+  {% if case.active_candidate_id %}<p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/candidates/{{ case.active_candidate_id }}">{{ tr('action.open_candidate') }}</a></p>{% endif %}
+  <p><a href="/{{ locale }}/cases/{{ case.id }}">{{ tr('action.open_private_case') }}</a></p>
+</section>
+{% endblock %}

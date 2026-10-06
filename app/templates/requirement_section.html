@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="progress">{{ '%02d'|format(section_no) }} / 08 · {{ tr('guide.step.' ~ '%02d'|format(section_no)) }}</div>
+<section class="card"><h1>{{ tr('guide.step.' ~ '%02d'|format(section_no)) }}</h1><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
+{% if section_no == 1 %}
+  {% for name in ['working_name','target_audience','primary_purpose','primary_visitor_action','supplemental_notes'] %}<label>{{ tr('field.' ~ name) }}{% if name == 'supplemental_notes' %}<textarea name="{{ name }}">{{ values.get(name,'') }}</textarea>{% else %}<input name="{{ name }}" value="{{ values.get(name,'') }}" {% if name == 'working_name' %}maxlength="200"{% else %}maxlength="240"{% endif %} required>{% endif %}</label>{% endfor %}
+{% elif section_no == 2 %}
+  {% for name in ['user_groups','primary_devices','entry_paths','core_actions'] %}<label>{{ tr('field.' ~ name) }}<textarea name="{{ name }}">{{ values.get(name,[])|join('\n') }}</textarea></label>{% endfor %}
+{% elif section_no == 3 %}
+  <label>{{ tr('field.pages') }}<textarea name="pages">{% for page in values.get('pages',[]) %}{{ page.title }}|{{ page.purpose }}|{{ page.content_items|join(',') }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea><small>{{ tr('help.pages_format') }}</small></label><label>{{ tr('field.language_requirements') }}<textarea name="language_requirements">{{ values.get('language_requirements',[])|join('\n') }}</textarea></label>
+{% elif section_no == 4 %}
+  {% for code in ['booking','form','membership','search','cart','admin','notification','other'] %}<fieldset><legend>{{ tr('feature.' ~ code) }}</legend><select name="feature_{{ code }}">{% for level in ['required','desired','excluded','undecided'] %}<option value="{{ level }}">{{ tr('choice.' ~ level) }}</option>{% endfor %}</select><textarea name="rules_{{ code }}" placeholder="{{ tr('field.operation_rules') }}"></textarea></fieldset>{% endfor %}
+{% elif section_no == 5 %}
+  {% for name in ['data_categories','read_rights','write_rights'] %}<label>{{ tr('field.' ~ name) }}<textarea name="{{ name }}"></textarea></label>{% endfor %}<label>{{ tr('field.contains_customer_data') }}<select name="contains_customer_data"><option value="no">{{ tr('choice.no') }}</option><option value="yes">{{ tr('choice.yes') }}</option></select></label>{% for name in ['retention_expectations','deletion_expectations'] %}<label>{{ tr('field.' ~ name) }}<textarea name="{{ name }}"></textarea></label>{% endfor %}
+{% elif section_no == 6 %}
+  {% for code in ['domain','hosting','payment','maps','social','email','api'] %}<fieldset><legend>{{ tr('service.' ~ code) }}</legend><select name="service_{{ code }}">{% for state in ['existing','to_select','contractor_proposal','not_needed'] %}<option value="{{ state }}">{{ tr('choice.' ~ state) }}</option>{% endfor %}</select><input name="service_{{ code }}_notes" placeholder="{{ tr('field.notes') }}"></fieldset>{% endfor %}
+  {% for code in ['existing_site','logo','brand_materials','database'] %}<fieldset><legend>{{ tr('asset.' ~ code) }}</legend><select name="asset_{{ code }}">{% for state in ['existing','to_select','contractor_proposal','not_needed'] %}<option value="{{ state }}">{{ tr('choice.' ~ state) }}</option>{% endfor %}</select><input name="asset_{{ code }}_notes" placeholder="{{ tr('field.notes') }}"></fieldset>{% endfor %}
+{% elif section_no == 7 %}
+  {% for name in ['brand_style','colors','reference_sites','mobile_requirements','accessibility_requirements','excluded_directions'] %}<label>{{ tr('field.' ~ name) }}<textarea name="{{ name }}"></textarea>{% if name == 'reference_sites' %}<small>{{ tr('help.references_format') }}</small>{% endif %}</label>{% endfor %}
+{% else %}
+  {% for name in ['deliverables','account_ownership','launch_conditions','acceptance_expectations','constraints'] %}<label>{{ tr('field.' ~ name) }}<textarea name="{{ name }}"></textarea></label>{% endfor %}{% for name in ['source_code_ownership','deployment_expectation','maintenance_expectation'] %}<label>{{ tr('field.' ~ name) }}<input name="{{ name }}"></label>{% endfor %}<label>{{ tr('field.required_deadline') }}<input name="required_deadline" type="date"></label><label>{{ tr('field.budget_status') }}<select name="budget_status">{% for state in ['known','range','undecided','contractor_proposal_requested'] %}<option value="{{ state }}">{{ tr('choice.' ~ state) }}</option>{% endfor %}</select></label><label>{{ tr('field.budget_currency') }}<input name="budget_currency" minlength="3" maxlength="3" pattern="[A-Za-z]{3}" placeholder="3-letter ISO 4217 code"></label><label>{{ tr('field.budget_min_amount') }}<input name="budget_min_amount" type="number" min="0"></label><label>{{ tr('field.budget_max_amount') }}<input name="budget_max_amount" type="number" min="0"></label>
+{% endif %}
+<button>{{ tr('action.save_continue') }}</button></form></section>
+{% endblock %}
