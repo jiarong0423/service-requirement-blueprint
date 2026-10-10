@@ -1,7 +1,7 @@
 # Current Secret Scan Evidence
 
 Review date: 2026-10-11  
-Source snapshot: `707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a`.
+Source snapshot: `9c146334fb384b40b16d837f5f7fd5f3e98d8aa8`.
 
 Result: **PASS** (Gitleaks exit code 0, zero findings for the immutable publication package).
 

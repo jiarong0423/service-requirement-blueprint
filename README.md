@@ -39,7 +39,7 @@ flowchart LR
 
 The official [Devpost Learn Skill Pack](https://github.com/challengepost/learn-ai-basics) contains these six numbered stages. The project's public evidence is [Scope](devpost/scope.md), [PRD](devpost/prd.md), [Spec](devpost/spec.md), [Build checklist](devpost/checklist.md), [App Map](devpost/app-map.html), and [Ship evidence](devpost/ship-evidence.md). The learner profile is excluded for privacy. Planning approvals and historical tests are records of the process; they do not independently prove every learner interaction or certify a later runtime.
 
-**Current handoff:** the edited demo candidate is 161.8 seconds at 1.1× speed (23 scenes, 39 captions). The public source update is authorized. Final human audiovisual review, a hosted video URL, learner review/completion of the AI-assisted submission draft, eligibility answers, and the exit survey remain open; Step 6 is not marked fully complete. See the [current capture guide](devpost/demo-capture-guide.md). The [official rules](https://learn-ai-basics.devpost.com/rules) require a working PoC, public source with planning documents, and a demonstration video; hosted application deployment is not required. Judges may choose to test the project.
+**Current published handoff (2026-10-11):** the 161.8-second demo at 1.1× speed (23 scenes, 39 captions) is [available on YouTube](https://www.youtube.com/watch?v=D5lQzvLHDhw) and embedded in the [Devpost project](https://devpost.com/software/service-requirement-blueprint). The public source has been synchronized. A review of all five Devpost edit steps found the project submitted, with saved project fields, five gallery images, survey answers, and personal declarations. Saved declarations do not independently establish eligibility or learner-only authorship; continuous human audiovisual review remains unverified. These publication facts do not certify every Skill Pack interaction as complete. See the [current capture guide](devpost/demo-capture-guide.md). The [official rules](https://learn-ai-basics.devpost.com/rules) require a working PoC, public source with planning documents, and a demonstration video; hosted application deployment is not required. Judges may choose to test the project.
 
 ## Implemented journey
 
@@ -136,10 +136,10 @@ Gate 0 remains available for fixed-font PDF and SVG preflight:
 ## Demonstration and submission evidence
 
 - `devpost/demo-guide.md` contains the local two-session demonstration sequence.
-- `devpost/ship-evidence.md` records factual build evidence, the authorized public repository, and the remaining learner-owned submission fields.
+- `devpost/ship-evidence.md` records factual build evidence, the published repository and video, the observed Devpost submission, and the remaining verification limits.
 - The authorized public source repository is <https://github.com/jiarong0423/service-requirement-blueprint>. The generated `public-export-manifest.json` binds the exact sanitized local source commit, tree, and per-file hashes. Security overlay receipts refer to that package; private runtime and production records are excluded.
-- `devpost/demo-capture-guide.md` describes the current 161.8-second / 1.1× video candidate, including its 23 scenes, 39 subtitle cues, illustrative material, verified artifacts, and pending human playback review.
-- Deployment, video publication, and Devpost submission require separate explicit authorization and have not been performed.
+- `devpost/demo-capture-guide.md` describes the published 161.8-second / 1.1× edit, including its 23 scenes, 39 subtitle cues, illustrative material, verified artifacts, and unverified continuous human playback review.
+- The learner uploaded the video and submitted the Devpost project. Hosted application deployment has not been performed and is not part of this local PoC.
 
 ## License
 

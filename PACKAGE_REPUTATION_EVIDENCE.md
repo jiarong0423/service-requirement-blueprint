@@ -1,7 +1,7 @@
 # Current Dependency Review Evidence
 
 Review date: 2026-10-11  
-Source snapshot: `707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a`  
+Source snapshot: `9c146334fb384b40b16d837f5f7fd5f3e98d8aa8`
 Scope: the 24 exact version pins in `requirements.txt`.
 
 The dependency manifest is byte-identical to the prior public repository. The existing project-local Python 3.12 environment passed `pip check` with no broken requirements; current functional, document, offline, and security tests passed as described in `security-evidence/verification.json`. No package was installed, upgraded, or substituted for this release.

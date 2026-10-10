@@ -1,8 +1,8 @@
 {
   "schema": "public-source-verification/1.0",
-  "reviewed_at": "2026-10-11T06:28:03+08:00",
-  "source_commit": "707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a",
-  "source_manifest_sha256": "22aa69d9e8fda3cd3a9318c9c03a515d60fa4995f93081b5ec83df692e972a36",
+  "reviewed_at": "2026-10-11T07:29:11.630914+08:00",
+  "source_commit": "9c146334fb384b40b16d837f5f7fd5f3e98d8aa8",
+  "source_manifest_sha256": "78246d2d91173fc13f7511c227c215cb361a0604ad17540e7dff595509c86943",
   "source_file_count": 141,
   "local_full_regression": {
     "commit": "0095518c2c01249e2a51405fc41b46dd88147fc6",
@@ -88,5 +88,22 @@
     "focused_checks_passed": 15,
     "seconds": 5.32,
     "runtime_test_tool_blobs_changed": false
+  },
+  "publication_status_documentation_delta": {
+    "parent_source_commit": "707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a",
+    "final_source_commit": "9c146334fb384b40b16d837f5f7fd5f3e98d8aa8",
+    "changed_files": [
+      "README.md",
+      "devpost/ship-evidence.md",
+      "devpost/demo-capture-guide.md"
+    ],
+    "focused_existing_ship_tests_passed": 5,
+    "runtime_tests_tools_changed": false,
+    "source_parity": "All manifest entries must be verified before publication",
+    "video_url": "https://www.youtube.com/watch?v=D5lQzvLHDhw",
+    "devpost_url": "https://devpost.com/software/service-requirement-blueprint",
+    "observed_devpost_state": "SUBMITTED;5/5 steps done",
+    "human_continuous_listening": "UNKNOWN",
+    "eligibility_and_learner_only_authorship": "Not independently certified"
   }
 }

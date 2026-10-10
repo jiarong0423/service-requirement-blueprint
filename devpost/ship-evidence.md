@@ -37,18 +37,15 @@ Commit `c619738`, responsive follow-up `e7b7306`, the earlier 203/204-test resul
 
 The PoC preserves evidence and workflow history. It does not provide payment, escrow, refunds, external email, OAuth, third-party electronic signatures, legal advice, dispute adjudication, cloud storage, deployment, or public case discovery. Local application-layer administrator isolation is not end-to-end encryption and does not prevent the computer owner from reading local files.
 
-## Current source and media handoff
+## Current published source, media, and submission
 
-The learner selected the MIT License and authorized the first public source publication on 2026-10-07. The learner subsequently authorized synchronizing the latest sanitized candidate to <https://github.com/jiarong0423/service-requirement-blueprint>. Exact source commit, tree, and file hashes are in the generated `public-export-manifest.json`; the public overlay receipts describe the verification of that particular package. Repository contents, not the historical test counts above, establish the current source inventory.
+The learner selected the MIT License and authorized the first public source publication on 2026-10-07. The latest sanitized candidate was synchronized to <https://github.com/jiarong0423/service-requirement-blueprint>. Exact source commit, tree, and file hashes are in the generated `public-export-manifest.json`; the public overlay receipts describe the verification of that particular package. Repository contents, not the historical test counts above, establish the current source inventory. Later documentation corrections must be included in a newly verified publication inventory rather than assumed to match an earlier manifest.
 
-The current final video candidate is 161.8 seconds at 1.1× speed, with 23 scenes and 39 English subtitle cues. See `demo-capture-guide.md`. Mechanical audio/subtitle/picture checks are recorded; continuous human playback/listening remains separate. Neither the source package nor earlier browser checks certify the final video or a submitted Devpost form.
+The learner uploaded the 161.8-second edit at 1.1× speed, with 23 scenes and 39 English subtitle cues, to <https://www.youtube.com/watch?v=D5lQzvLHDhw>. The same video is embedded in the public Devpost project. See `demo-capture-guide.md`. Mechanical audio/subtitle/picture checks are recorded; continuous human playback/listening remains unverified. Neither the source package nor earlier browser checks independently certifies audiovisual quality.
 
-The learner requested an AI-assisted English draft following their own product choices and conflict narrative. The draft is prepared for learner review; it is not represented as independently verified learner-only authorship. These remaining fields require factual completion:
+On 2026-10-11, read-only inspection of all five Devpost edit steps found **Project submitted** and **5/5 steps done** at <https://devpost.com/software/service-requirement-blueprint>. The saved form contains the project name and pitch, story, public source and license links, the video link, five gallery images with English captions, survey answers, and age-of-majority/eligibility declarations. This records the form's observed state, not independent verification of those personal declarations or a judging outcome.
 
-- Hosted public or unlisted video URL and final human audiovisual review.
-- Learner review and completion of the Devpost project fields and official Skill Pack explanation.
-- Age-of-majority/eligibility confirmation and remaining personal answers.
-- Exit survey; peer feedback and cloud deployment are optional, not mandatory release features.
+The learner requested an AI-assisted English draft following their own product choices and conflict narrative. The saved submission is not represented as independently verified learner-only authorship, and publication does not certify every Skill Pack interaction as complete. Remaining verification limits are continuous human audiovisual review and independent confirmation of learner-process and personal eligibility claims. Peer feedback and cloud deployment are optional; hosted application deployment has not been performed.
 
 ### Earlier recording gate — historical status
 

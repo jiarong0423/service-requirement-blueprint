@@ -1,8 +1,10 @@
 # Current Demonstration Capture Guide
 
-The current edited candidate is **161.8 seconds**, at **1.1× playback speed**, with **23 scenes**, **23 narration paragraphs**, and **39 English subtitle cues**. It is 1920×1080 at 30 frames per second. The former 105-second plan is historical and is not the current editing or subtitle authority.
+The current published edit is **161.8 seconds**, at **1.1× playback speed**, with **23 scenes**, **23 narration paragraphs**, and **39 English subtitle cues**. It is 1920×1080 at 30 frames per second. The former 105-second plan is historical and is not the current editing or subtitle authority.
 
 Final MP4 SHA-256: `c9b895cc5765dff7016b7d0f3a538a9d96fe7ffba6876492baf0daf7003ae3f9`.
+
+The learner uploaded the edit to [YouTube](https://www.youtube.com/watch?v=D5lQzvLHDhw). On 2026-10-11, the same video link and five gallery images were found saved in the [Devpost project](https://devpost.com/software/service-requirement-blueprint); its submission flow showed **Project submitted** and **5/5 steps done**. The local MP4 hash identifies the export, not a byte-for-byte match to YouTube's transcoded stream.
 
 ## One conflict, eight workflow beats
 
@@ -21,8 +23,8 @@ Final MP4 SHA-256: `c9b895cc5765dff7016b7d0f3a538a9d96fe7ffba6876492baf0daf7003a
 - Scenes 1, 2, and 6 are illustrations. Scenes 3, 9, 17, and 18 are recorded application video. The other 16 scenes use still images, including product screens and verified artifact cards.
 - PDF and ZIP contents were inspected off camera. The edit shows stills of verified outputs; it does not claim to film the ZIP download click.
 - Sign-in, private invitation handling, account administration, and the separate dispute branch are supported by the interactive guide and tests; they are not all shown in this final edit.
-- Mechanical subtitle, audio timing, decoding, and picture checks have receipts. Continuous human playback and listening remain a separate review before video publication.
-- This source repository excludes recordings, case files, private accounts, invitation secrets, learner profile, and internal production logs. A source manifest proves source identity, not audiovisual or Devpost submission approval.
+- Mechanical subtitle, audio timing, decoding, and picture checks have receipts. Continuous human playback and listening remain unverified; publication alone does not establish that review.
+- This source repository excludes recordings, case files, private accounts, invitation secrets, learner profile, and internal production logs. A source manifest proves source identity, not audiovisual quality, personal eligibility, learner-only authorship, or a judging outcome.
 
 ## Current authorities
 
