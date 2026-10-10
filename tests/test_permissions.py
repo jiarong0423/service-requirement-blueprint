@@ -67,7 +67,12 @@ def test_admin_account_query_never_reads_case_or_artifact_tables(demo_runtime, m
     with app.test_client() as client:
         result = login(client, "en", "admin@example.test", passwords["admin"])
         assert result.location.endswith("/en/admin/accounts")
-        assert client.get("/en/account").status_code == 200
+        account = client.get("/en/account")
+        assert account.status_code == 200
+        account_html = account.get_data(as_text=True)
+        assert "Manage accounts and service health" in account_html
+        assert "Continue a private case" not in account_html
+        assert "start a new requirement blueprint" not in account_html
         assert client.get("/en/admin/accounts").status_code == 200
         for path in (
             "/en/owner/requirements/00000000-0000-0000-0000-000000000000/review",

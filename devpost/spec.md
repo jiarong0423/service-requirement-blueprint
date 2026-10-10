@@ -31,7 +31,7 @@ English-only constrains system-owned UI and documents. User-authored data remain
 
 Routes parse requests, enforce HTTP and CSRF contracts, call services, and render catalog-backed templates. Route code does not decide identity from uploaded JSON or session-supplied roles.
 
-Routes implemented through Slice 5:
+Routes implemented through Slice 7:
 
 | Method | Route | Authority |
 |---|---|---|
@@ -53,6 +53,7 @@ Routes implemented through Slice 5:
 | POST | `/en/owner/requirements/{case_id}/invitations` | bound client, CSRF, designated approved member |
 | GET | `/en/owner/requirements/{case_id}/invitation` | bound client |
 | POST | `/en/owner/requirements/{case_id}/invitations/{invitation_id}/revoke` | bound client and same-case invitation, CSRF |
+| POST | `/en/owner/requirements/{case_id}/invitations/{invitation_id}/cancel-before-import` | bound client, accepted invitation before exact JSON A import, CSRF and current revision |
 | GET | `/en/invitations/{invitation_id}` | designated active member, summary only |
 | POST | `/en/invitations/{invitation_id}/accept` | designated active member, CSRF, one-time code |
 | POST | `/en/invitations/{invitation_id}/reject` | designated active member, CSRF, one-time code |
@@ -72,11 +73,11 @@ Routes implemented through Slice 5:
 | POST | `/en/cases/{case_id}/json-b/reviews/{version_no}/objections` | bound client only, CSRF, valid business-field pointer |
 | POST | `/en/cases/{case_id}/json-b/reviews/{version_no}/revise` | bound contractor only, CSRF, create next private revision |
 | POST | `/en/cases/{case_id}/candidates` | bound contractor only, CSRF, current fixed sources |
-| GET | `/en/cases/{case_id}/candidates/{candidate_id}` | bound party, current active candidate |
+| GET | `/en/cases/{case_id}/candidates/{candidate_id}` | bound party in `JSON_B_REVIEW`, `CANDIDATE_REVIEW`, or `FORMAL`; current, invalidated, or formal historical candidate with saved-byte verification |
 | GET | `/en/cases/{case_id}/candidates/{candidate_id}/manifest.json` | bound party, reauthorized and revalidated, attachment |
 | GET | `/en/cases/{case_id}/candidates/{candidate_id}/document.pdf` | bound party, reauthorized and revalidated, inline or exact-byte attachment |
 | GET | `/en/cases/{case_id}/candidates/{candidate_id}/diagram.svg` | bound party, reauthorized and revalidated, inline or exact-byte attachment |
-| POST | `/en/cases/{case_id}/candidates/{candidate_id}/acknowledgements` | bound party, CSRF, current round revision and exact fixed tuple |
+| POST | `/en/cases/{case_id}/candidates/{candidate_id}/acknowledgements` | bound party, CSRF, current round revision and exact fixed tuple; creates the base acknowledgement or one renewal linked to one outstanding exact withdrawal |
 | POST | `/en/cases/{case_id}/candidates/{candidate_id}/confirmations` | acknowledged bound party, CSRF, current round revision; second role may formalize |
 | POST | `/en/cases/{case_id}/candidates/{candidate_id}/confirmations/withdraw` | confirming party, CSRF, only before formalization |
 | POST | `/en/cases/{case_id}/candidates/{candidate_id}/revision-requests` | bound party, CSRF, reason required; invalidates the round |
@@ -84,7 +85,18 @@ Routes implemented through Slice 5:
 | GET | `/en/cases/{case_id}/formal/manifest.json` | bound party, fresh authorization and digest validation |
 | GET | `/en/cases/{case_id}/formal/document.pdf` | bound party, fresh authorization and digest validation |
 | GET | `/en/cases/{case_id}/formal/diagram.svg` | bound party, fresh authorization and digest validation |
+| GET | `/en/cases/{case_id}/formal/requirement.json` | bound party, exact saved source bytes and digest validation |
+| GET | `/en/cases/{case_id}/formal/proposal.json` | bound party, exact saved source bytes and digest validation |
 | POST | `/en/cases/{case_id}/separate-proposals` | formal case client, CSRF, idempotent empty child proposal |
+| GET | `/en/cases/{case_id}/delivery` | bound party, current formal and delivery state revalidated |
+| POST | `/en/cases/{case_id}/deliveries` | bound contractor, CSRF, `FORMAL` or `REMEDIATION`, idempotent complete criterion set |
+| GET | `/en/cases/{case_id}/deliveries/{delivery_id}/download` | bound party, current authorization plus path, length, and digest validation |
+| POST | `/en/cases/{case_id}/deliveries/{delivery_id}/begin-inspection` | bound client, CSRF, current `DELIVERED` revision |
+| POST | `/en/cases/{case_id}/deliveries/{delivery_id}/inspections` | bound client, CSRF, current `UNDER_ACCEPTANCE` or `REINSPECTION` revision; complete criteria; all-pass requires explicit acceptance, while any returned item forbids it |
+| POST | `/en/cases/{case_id}/disputes` | bound party, CSRF, current `DELIVERED`, `UNDER_ACCEPTANCE`, `REMEDIATION`, or `REINSPECTION` revision and reason |
+| POST | `/en/cases/{case_id}/disputes/{dispute_id}/positions` | bound party, CSRF, dispute must match the workflow's active dispute, one append-only final position per role |
+| POST | `/en/cases/{case_id}/evidence-exports` | bound party, CSRF, `ACCEPTED` or `DISPUTED`, idempotent fixed source fingerprint; `?download=1` returns the current ZIP attachment with private no-store headers |
+| GET | `/en/cases/{case_id}/evidence-exports/{export_id}/download` | bound party, current authorization plus ZIP schema, path, length, digest, and inner-entry validation |
 | GET | `/en/admin/accounts` | administrator safe projection |
 | POST | `/en/admin/accounts/{user_id}/status` | administrator, CSRF |
 | GET | `/en/admin/service-health` | administrator safe projection |
@@ -100,9 +112,11 @@ Unknown locale prefixes and unprefixed product paths return 404.
 - `invitation_workflow`: verifies exact JSON A source bytes, issues single-use expiring invitations, binds the designated contractor, controls terminal invitation states, and activates the private case only after exact-byte reimport.
 - `discussion_workflow`: authorizes current case parties, appends messages and corrections, opens issues, and applies revision-checked two-role issue transitions.
 - `json_b_workflow`: keeps contractor drafts private, computes currency-aware totals, binds current JSON A, exports immutable private bytes, validates exact reimport, publishes review versions, and preserves superseded bytes.
-- `candidate_documents`: validates one bounded diagram model and renders the same complete model into fixed PDF and SVG bytes using catalog-backed labels and pinned fonts.
+- `candidate_documents`: validates one bounded diagram model and renders the same complete model into fixed PDF and SVG bytes using catalog-backed labels and pinned fonts. Server-controlled JSON A codes receive readable labels, while contractor-authored JSON B `role_code` and `service_code` values remain verbatim.
 - `candidate_workflow`: checks candidate prerequisites and complete source identities, commits one active candidate transactionally, revalidates protected reads, and reconciles controlled storage at startup.
 - `formalization_workflow`: derives live party roles, binds acknowledgements and confirmations to the complete fixed artifact tuple, serializes withdrawal/revision/formalization, verifies formal reads, and creates idempotent empty child proposals.
+- `delivery_workflow`: binds post-formal delivery, inspection, remediation, reinspection, explicit acceptance, dispute, and party-position transitions to the unchanged formal candidate and preserves append-only evidence.
+- `evidence_export`: creates and reads one immutable party-only ZIP for accepted or disputed cases, validates the schema-allowlisted entry set and source fingerprint, and reconciles controlled storage at startup.
 - `document_integrity`: loads and hashes catalog, label-map, font, licence, and provenance assets; enforces the supported-glyph boundary; validates inactive PDF and safe SVG output.
 - `security`: password hashing, bounded password verification, session loading, CSRF, and case-party authorization.
 
@@ -163,11 +177,11 @@ Store one current contractor-only draft, its immutable private exports, and part
 
 ### `candidate_versions`
 
-Stores one current fixed candidate per case, its exact JSON A and JSON B source identities, manifest/PDF/SVG artifact pointers, template identity, English catalog digest, label-map digest, creation actor, review revision, lifecycle timestamps, invalidation reason, version, and state. A candidate is `CURRENT`, `INVALIDATED`, `SUPERSEDED`, or `FORMAL`. The case must point to the same current candidate in `CANDIDATE_REVIEW` and the same formal candidate in `FORMAL`; startup fails closed on any pointer, artifact-row, manifest, or file mismatch.
+Stores one current fixed candidate per case, its exact JSON A and JSON B source identities, manifest/PDF/SVG artifact pointers, template identity, English catalog digest, label-map digest, creation actor, review revision, lifecycle timestamps, invalidation reason, version, and state. A candidate is `CURRENT`, `INVALIDATED`, `SUPERSEDED`, or `FORMAL`. The case must point to the same current candidate in `CANDIDATE_REVIEW` and the same formal candidate in `FORMAL`; startup fails closed on their pointer, artifact-row, manifest, or file mismatch. Historical `SUPERSEDED` directories remain retained and are checked against their recorded three-file paths, lengths, and digests without reinterpreting an older manifest schema.
 
-### `candidate_review_rounds`, `candidate_acknowledgements`, and `candidate_confirmations`
+### `candidate_review_rounds`, `candidate_acknowledgements`, `candidate_acknowledgement_renewals`, and `candidate_confirmations`
 
-Store the open, invalidated, or formalized review round and each role's explicit acknowledgement and confirmation history. Every acknowledgement and confirmation duplicates the exact manifest, PDF, SVG, JSON A, and JSON B artifact IDs, byte lengths, and SHA-256 values it binds. Acknowledgements are append-only. Confirmations may move only from `CURRENT` to `WITHDRAWN`, `INVALIDATED`, or `FORMALIZED`; terminal rows and formal records are immutable. Partial unique indexes allow at most one current confirmation per role and actor.
+Store the open, invalidated, or formalized review round and each role's explicit acknowledgement and confirmation history. Every base acknowledgement and confirmation duplicates the exact manifest, PDF, SVG, JSON A, and JSON B artifact IDs, byte lengths, and SHA-256 values it binds. A base acknowledgement is append-only. Each acknowledgement-renewal event is also append-only and links that same base acknowledgement to one exact withdrawn confirmation; database triggers reject mismatched roles, actors, rounds, cases, candidates, non-withdrawn confirmations, malformed audit timestamps, or application attempts to create a legacy marker. Migration `007` uses the append-only SQLite confirmation-row creation sequence only to reconstruct which pre-policy withdrawals were followed by another confirmation, and records those relationships as `LEGACY_ACKNOWLEDGEMENT_REUSE` rather than falsely labelling them as new acknowledgements. Runtime authorization never orders timestamps or UUIDs; more than one outstanding withdrawal fails closed as an acknowledgement conflict. All post-migration renewals are `EXPLICIT`. Confirmations may move only from `CURRENT` to `WITHDRAWN`, `INVALIDATED`, or `FORMALIZED`; terminal rows and formal records are immutable. Partial unique indexes allow at most one current confirmation per role and actor.
 
 ### `separate_proposal_requests`
 
@@ -215,13 +229,14 @@ Only the client may add an objection to an allowlisted, resolving RFC 6901 busin
 - The secret is 32 random bytes, installed atomically with mode `0600`.
 - All three demonstration accounts are inserted in one transaction with scrypt hashes.
 - Initialization failure removes only files created by that attempt.
-- Flask session data contains only `user_id`, `session_version`, and `csrf_nonce`.
+- Signed-in Flask session data contains `user_id`, `session_version`, and `csrf_nonce`. A signed-out invitation handoff may briefly contain `post_login_invitation_id`; sign-in clears the previous session before creating the authenticated one.
 - Login and logout clear the old session and issue a new nonce.
 - The nonce has at least 32 bytes of entropy and is compared in constant time.
 - Every POST validates CSRF before entering the service layer.
 - Each protected request reloads current account status and session version from SQLite.
 - Disabling an account increments its session version in the same transaction.
-- Login failure returns one message and still executes the password-verification path for an unknown account.
+- Invalid credentials return one message and still execute the password-verification path for an unknown account.
+- Password verification reports `VALID`, `INVALID`, or `BUSY`. Exhausted KDF capacity returns the same `503 Service Unavailable`, `Retry-After: 1`, and generic message for existing and unknown accounts; it is never collapsed into an invalid-credential result.
 
 ## Administrator Isolation
 
@@ -300,9 +315,9 @@ The JSON A blueprint contract contains exactly three nodes and two directed edge
 
 Candidate publication writes the three files to a private staging directory, fsyncs each file and the staging directory, then atomically renames the directory with no-replace semantics. Parent directories are fsynced. Any post-publish failure quarantines the published directory. Startup reconciliation rejects a mismatch between the case pointer, current candidate row, artifact contract, manifest, or saved files and quarantines unreferenced staging and candidate directories.
 
-The fixed PDF uses lifecycle-neutral wording; candidate, invalidated, and formal status live on authenticated verification pages. Template `candidate-document/1.1` introduced this boundary. The Slice 6 migration preserves candidates made with the superseded lifecycle-specific notice, marks them invalidated, and returns their cases to JSON B review instead of reinterpreting or rerendering old bytes.
+The fixed PDF uses lifecycle-neutral wording; candidate, invalidated, and formal status live on authenticated verification pages. Template `candidate-document/1.1` introduced this boundary. Template `candidate-document/1.2` keeps internal identifiers, digests, schema names, and machine fields in the manifest and authenticated verification disclosure while rendering plain-language agreement content in the PDF. Template `candidate-document/1.3` preserves contractor-authored JSON B `role_code` and `service_code` values exactly while retaining readable labels for server-controlled JSON A codes and declared enums. Template `candidate-document/1.4` names each open item from its bound JSON A field and rejects unresolved pointers before rendering. Earlier immutable candidates are never reinterpreted or rerendered.
 
-Each party acknowledgement and confirmation binds the same manifest, PDF, SVG, JSON A, and JSON B artifact IDs, lengths, and digests. Mutations run under `BEGIN IMMEDIATE`, derive role and time from live SQLite data, recheck both active accounts, pointers, sources, quote expiry, blocking issues, manifest, and exact saved files, and reject stale input with zero writes. A party may withdraw only its own current confirmation before formalization. A required revision invalidates the round and current confirmations, clears the active pointer, marks the candidate files invalidated, and returns to `JSON_B_REVIEW` while preserving all rows and bytes.
+Each party acknowledgement and confirmation binds the same manifest, PDF, SVG, JSON A, and JSON B artifact IDs, lengths, and digests. Mutations run under `BEGIN IMMEDIATE`, derive role and time from live SQLite data, recheck both active accounts, pointers, sources, quote expiry, blocking issues, manifest, and exact saved files, and reject stale input with zero writes. A party may withdraw only its own current confirmation before formalization. That withdrawn confirmation blocks reconfirmation until the same party creates an append-only acknowledgement-renewal event linked to that exact withdrawal; a second withdrawal requires another renewal. A required revision invalidates the round and current confirmations, clears the active pointer, marks the candidate files invalidated, and returns to `JSON_B_REVIEW` while preserving all rows and bytes.
 
 Two current confirmations from the distinct bound roles formalize the existing candidate in one transaction. The transition clears the active pointer, sets the formal pointer, changes candidate and bound artifact lifecycle metadata to formal, and marks both confirmations formalized. It never invokes ReportLab, copies, moves, replaces, or writes a document file. Formal reads are party-only and revalidate the same saved bytes. Formal case identity, candidate rows, artifacts, acknowledgements, and terminal confirmations reject overwrite or deletion.
 
@@ -312,7 +327,7 @@ Delivery versions, items, test results, inspections, inspection results, accepta
 
 A returned item requires a reason. Remediation creates a new delivery version bound to the returned inspection, followed by reinspection. Only an explicit all-pass client POST creates a separate acceptance event and permits the workflow to enter `ACCEPTED`. The database guard requires the current delivery, complete criterion set, all-pass child results, matching criterion digest, client identity, and inspection time. Every protected delivery view and startup reconciliation recomputes inspection consistency and the acceptance evidence digest. Deadline events, silence, GET requests, and restart never imply consent. A dispute preserves both parties' final positions without platform adjudication.
 
-Evidence export is party-only and excludes private drafts. It includes the exact formal manifest, PDF, SVG, JSON A and JSON B, fixed delivery JSON records, inspections, explicit acceptance, remediation history, deadline events, and dispute positions. The ZIP manifest conforms to JSON Schema Draft 2020-12 with no unknown fields and lists each allowlisted path, length, and SHA-256 in canonical path order. Export verification rejects duplicate or unsafe paths, encrypted or non-regular entries, oversized manifests, more than 32 listed files, more than 64 MiB of declared content, mismatched inner bytes, a source fingerprint that does not recompute from the canonical entry list, or a manifest that does not match the database export, case, formal candidate, version, schema, and source fingerprint. Preparing an export is POST with CSRF; downloading it is GET with fresh account, party-binding, controlled-path, regular-file, length, outer-digest, manifest, and inner-entry validation. A matching source fingerprint returns the same stored ZIP bytes instead of silently regenerating the export.
+Evidence export is party-only and excludes private drafts. It includes exactly the formal manifest, PDF, SVG, JSON A and JSON B plus the five allowlisted delivery-record files for deliveries, inspections, explicit acceptance, timeline, and dispute positions. The ZIP manifest conforms to JSON Schema Draft 2020-12 with no unknown fields and lists each required path, length, and SHA-256 in canonical path order. Export verification rejects a missing, substituted, duplicate, or unsafe path; encrypted or non-regular entries; oversized manifests; more than 64 MiB of declared content; mismatched inner bytes; a source fingerprint that does not recompute from the canonical entry list; or a manifest that does not match the database export, case, formal candidate, version, schema, and source fingerprint. Preparing an export is POST with CSRF; `?download=1` prepares or reuses the package for the current evidence state and immediately returns it. Saved downloads use GET with fresh account, party authorization, controlled-path, regular-file, length, outer-digest, manifest, and inner-entry validation. The dashboard and every saved download recompute the current evidence fingerprint inside one deferred SQLite read snapshot. Only the package whose fingerprint matches the current case evidence is downloadable; earlier immutable packages remain listed as superseded history. A matching current fingerprint returns the same stored ZIP bytes instead of silently regenerating the export.
 
 Startup reconciliation performs the same delivery and export checks before serving requests. It compares every fixed delivery JSON object with the append-only database rows, verifies exact controlled paths, and quarantines unreferenced delivery and export directories. Database transactions and unique idempotency constraints serialize concurrent preparation so identical export requests converge on one row and one fixed ZIP.
 
@@ -442,7 +457,7 @@ Required evidence:
 
 - a populated Slice 5 database migrates atomically and invalidates lifecycle-specific legacy candidates without changing their rows or file bytes;
 - each acknowledgement and confirmation binds the complete manifest, PDF, SVG, JSON A, and JSON B artifact IDs, byte lengths, and SHA-256 values;
-- one confirmation remains pending and revocable, while silence, expiry, stale revisions, tampering, or inactive parties never become consent;
+- one confirmation remains pending and revocable, while silence, expiry, stale revisions, tampering, or inactive parties never become consent; reconfirmation after each withdrawal fails until a new acknowledgement-renewal event is recorded;
 - simultaneous confirmation, confirmation-versus-revision, and withdrawal-versus-confirmation operations serialize to one coherent result;
 - two distinct-role confirmations formalize the original candidate by database transition only, without rendering, copying, moving, or rewriting any file;
 - formal identity, candidate, artifacts, acknowledgements, and terminal confirmations reject overwrite or deletion;

@@ -1,23 +1,40 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import context_bar with context %}
 {% block title %}{{ tr('page.json_b_draft') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
-<div class="progress">{{ tr('case.party_only') }} · {{ tr('status.json_b_private_draft') }}</div>
+{{ context_bar(tr('role.contractor'), 'Quote', 'Private proposal draft', 'Define scope, price, responsibilities, and acceptance', 'quote') }}
 <section class="card stack">
   <header class="section-heading">
     <div><p class="eyebrow">{{ tr('document.json_b') }}</p><h1>{{ tr('page.json_b_draft') }}</h1></div>
     <span class="status-chip">{{ tr('role.contractor') }}</span>
   </header>
   <aside class="readonly-banner"><strong>{{ tr('notice.json_b_draft_private') }}</strong><span>{{ tr('notice.json_b_server_fields') }}</span></aside>
-  <form method="post" class="stack">
+  <section class="action-panel"><p class="eyebrow">Proposal checklist</p><h2>Define what is included before setting the price.</h2><p>Document scope, exclusions, milestones, responsibilities, fees, acceptance criteria, and maintenance terms. Only the contractor can see this editor. When the proposal is ready, save it and use the review handoff to share it with the client.</p></section>
+  <section class="data-panel stack" aria-labelledby="proposal-summary-heading">
+    <h2 id="proposal-summary-heading">Current proposal summary</h2>
+    <p><strong>Work summary:</strong> <span data-user-content>{{ draft_business.requirement_understanding or 'Not entered yet' }}</span></p>
+    <div class="summary-grid">
+      <article><h3>Included work</h3><p>{{ draft_business.included_scope|length }} item(s)</p></article>
+      <article><h3>Excluded work</h3><p>{{ draft_business.excluded_scope|length }} item(s)</p></article>
+      <article><h3>Milestones</h3><p>{{ draft_business.milestones|length }} milestone(s)</p></article>
+      <article><h3>Review criteria</h3><p>{{ draft_business.acceptance.criteria|length }} criterion/criteria</p></article>
+    </div>
+    <p>Open the editor below to add or revise the proposal details. The summary updates after you save.</p>
+  </section>
+  <details class="technical-disclosure">
+    <summary>Edit structured proposal details</summary>
+  <form method="post" class="stack proposal-editor">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected_revision" value="{{ draft.content_revision if draft else 0 }}">
     <label>{{ tr('field.json_b_business_data') }}
       <textarea name="draft_json" rows="34" spellcheck="false" required data-user-content>{{ draft_text }}</textarea>
     </label>
-    <p class="help">{{ tr('help.json_b_business_data') }}</p>
-    <button>{{ tr('action.save_json_b_draft') }}</button>
+    <p class="help">{{ tr('help.json_b_business_data') }} Set <code>quote_expires_at</code> to the expiry you offer before saving this proposal.</p>
+    <button data-ui="primary-action">{{ tr('action.save_json_b_draft') }}</button>
   </form>
+  </details>
   {% if draft %}
+  <section class="action-panel"><p class="eyebrow">Review handoff</p><h2>Prepare the saved proposal for client review.</h2><p>The next screen asks you to download the saved proposal and upload the same file before it becomes visible to both parties.</p></section>
   <form method="post" action="/{{ locale }}/cases/{{ case_id }}/json-b/draft/export">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected_revision" value="{{ draft.content_revision }}">

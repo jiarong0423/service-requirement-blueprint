@@ -3,22 +3,28 @@ from __future__ import annotations
 import io
 import hashlib
 import json
+import re
 import sqlite3
 import socket
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, Thread
 
 import pytest
 
+import app.services.delivery_workflow as delivery_module
+import app.services.evidence_export as evidence_module
 from app.db import connect_database
 from app import create_app
 from app.security.auth import hash_password
 from app.services.case_workflow import utc_now
 from app.services.artifact_store import install_fixed_blob
 from app.services.evidence_export import prepare_evidence_export
+from app.services.delivery_workflow import submit_delivery
+from app.services.evidence_export import EvidenceExportError
 from tests.helpers import csrf, login
 from tests.slice7_helpers import create_formal_context, current_workflow, delivery_payload
 
@@ -51,6 +57,151 @@ def _inspect(context, result: str, *, reason: str = "", accept: bool = False):
     return current_workflow(context["instance_root"], context["case_id"])
 
 
+def test_inspection_digest_work_never_runs_inside_writer_transaction(
+    demo_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(context["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    writer_active = False
+    original_transaction = delivery_module.immediate_transaction
+    original_digest = delivery_module._digest
+
+    @contextmanager
+    def tracked_transaction(connection):
+        nonlocal writer_active
+        with original_transaction(connection):
+            writer_active = True
+            try:
+                yield
+            finally:
+                writer_active = False
+
+    def guarded_digest(*args, **kwargs):
+        assert writer_active is False
+        return original_digest(*args, **kwargs)
+
+    monkeypatch.setattr(delivery_module, "immediate_transaction", tracked_transaction)
+    monkeypatch.setattr(delivery_module, "_digest", guarded_digest)
+    assert _inspect(context, "PASS", accept=True)["state"] == "ACCEPTED"
+
+
+def test_evidence_graph_serialization_never_runs_inside_writer_transaction(
+    demo_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(context["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    assert _inspect(context, "PASS", accept=True)["state"] == "ACCEPTED"
+    writer_active = False
+    original_transaction = evidence_module.immediate_transaction
+
+    @contextmanager
+    def tracked_transaction(connection):
+        nonlocal writer_active
+        with original_transaction(connection):
+            writer_active = True
+            try:
+                yield
+            finally:
+                writer_active = False
+
+    monkeypatch.setattr(evidence_module, "immediate_transaction", tracked_transaction)
+    for name in ("_evidence_entries", "_write_zip", "_json_bytes"):
+        original = getattr(evidence_module, name)
+
+        def outside_writer(*args, _original=original, _name=name, **kwargs):
+            assert writer_active is False, f"{_name} ran inside writer transaction"
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(evidence_module, name, outside_writer)
+    response = context["owner"].post(
+        f"/en/cases/{context['case_id']}/evidence-exports",
+        data={"csrf_token": csrf(context["owner"])},
+    )
+    assert response.status_code == 302
+
+
+def test_evidence_export_projection_ignores_new_database_columns(demo_runtime) -> None:
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(context["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    assert _inspect(context, "PASS", accept=True)["state"] == "ACCEPTED"
+
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        assets = context["app"].config["DOCUMENT_ASSETS"]
+        data_root = context["instance_root"] / "data"
+        schema_path = Path(context["app"].config["EVIDENCE_EXPORT_SCHEMA_PATH"])
+        before_view = delivery_module.load_delivery_dashboard(
+            connection, data_root, assets, context["case_id"], context["owner_id"]
+        )
+        before = evidence_module._evidence_entries(connection, data_root, before_view, schema_path)
+
+        for table in (
+            "delivery_versions",
+            "inspection_item_results",
+            "case_timeline_events",
+            "acceptance_events",
+        ):
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN secret_canary TEXT NOT NULL "
+                "DEFAULT 'SECRET-CANARY-MUST-NOT-EXPORT'"
+            )
+
+        after_view = delivery_module.load_delivery_dashboard(
+            connection, data_root, assets, context["case_id"], context["owner_id"]
+        )
+        after = evidence_module._evidence_entries(connection, data_root, after_view, schema_path)
+    finally:
+        connection.close()
+
+    assert after == before
+    assert b"SECRET-CANARY-MUST-NOT-EXPORT" not in b"".join(after.values())
+
+
+def test_evidence_record_schema_rejects_unknown_fields(demo_runtime) -> None:
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(context["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    assert _inspect(context, "PASS", accept=True)["state"] == "ACCEPTED"
+
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        data_root = context["instance_root"] / "data"
+        schema_path = Path(context["app"].config["EVIDENCE_EXPORT_SCHEMA_PATH"])
+        view = delivery_module.load_delivery_dashboard(
+            connection,
+            data_root,
+            context["app"].config["DOCUMENT_ASSETS"],
+            context["case_id"],
+            context["owner_id"],
+        )
+        entries = evidence_module._evidence_entries(connection, data_root, view, schema_path)
+    finally:
+        connection.close()
+
+    payloads = {
+        path: json.loads(entries[path].decode("utf-8"))
+        for path in evidence_module.RECORD_SCHEMA_KEYS
+    }
+    payloads["records/timeline.json"][0]["unexpected_secret"] = "must fail closed"
+    with pytest.raises(EvidenceExportError, match="export_record_invalid"):
+        evidence_module._validate_record_payloads(payloads, schema_path)
+
+
 def test_delivery_history_uses_accessible_responsive_table_region(demo_runtime) -> None:
     context = create_formal_context(demo_runtime)
     _submit_delivery(context)
@@ -65,10 +216,10 @@ def test_delivery_history_uses_accessible_responsive_table_region(demo_runtime) 
     assert 'class="delivery-table"' in html
 
     stylesheet = Path("app/static/css/app.css").read_text(encoding="utf-8")
-    assert ".table-scroll{max-width:100%;overflow-x:auto;" in stylesheet
-    assert ".delivery-table{min-width:56rem}" in stylesheet
-    assert "word-break:normal" in stylesheet
-    assert ".data-panel,.data-panel article{min-width:0}" in stylesheet
+    assert re.search(r"\.table-scroll\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;", stylesheet)
+    assert re.search(r"\.delivery-table\s*\{[^}]*min-width:\s*56rem;", stylesheet)
+    assert re.search(r"\.delivery-table td\s*\{[^}]*word-break:\s*normal;", stylesheet)
+    assert re.search(r"\.data-panel article\s*\{[^}]*min-width:\s*0;", stylesheet)
 
 
 def test_return_remediation_reinspection_acceptance_and_export(demo_runtime) -> None:
@@ -110,10 +261,15 @@ def test_return_remediation_reinspection_acceptance_and_export(demo_runtime) -> 
         connection.close()
 
     prepared = context["owner"].post(
-        f"/en/cases/{context['case_id']}/evidence-exports",
+        f"/en/cases/{context['case_id']}/evidence-exports?download=1",
         data={"csrf_token": csrf(context["owner"])},
     )
-    assert prepared.status_code == 302
+    assert prepared.status_code == 200
+    assert prepared.mimetype == "application/zip"
+    assert prepared.headers["Content-Disposition"] == 'attachment; filename="evidence-1.zip"'
+    assert prepared.headers["Cache-Control"] == "no-store, private"
+    with zipfile.ZipFile(io.BytesIO(prepared.data)) as archive:
+        assert "export-manifest.json" in archive.namelist()
     connection = connect_database(context["instance_root"] / "app.sqlite3")
     try:
         export = connection.execute("SELECT * FROM evidence_exports WHERE case_id = ?", (context["case_id"],)).fetchone()
@@ -141,6 +297,55 @@ def test_return_remediation_reinspection_acceptance_and_export(demo_runtime) -> 
         assert b"json_b_drafts" not in combined
         assert b"password_hash" not in combined
         assert private_sentinel.encode() not in combined
+
+
+def test_export_verifier_rejects_a_self_consistent_replaced_fixed_entry(demo_runtime) -> None:
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(context["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    _inspect(context, "PASS", accept=True)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/evidence-exports",
+        data={"csrf_token": csrf(context["owner"])},
+    ).status_code == 302
+
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        export = connection.execute(
+            "SELECT * FROM evidence_exports WHERE case_id = ?", (context["case_id"],)
+        ).fetchone()
+    finally:
+        connection.close()
+    raw = (context["instance_root"] / "data" / export["relative_path"]).read_bytes()
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        entries = {
+            name: archive.read(name)
+            for name in archive.namelist()
+            if name != "export-manifest.json"
+        }
+        manifest = json.loads(archive.read("export-manifest.json"))
+
+    removed = entries.pop("formal/json-b.json")
+    entries["private/requirement-draft.json"] = removed
+    listed = [evidence_module._entry(name, content) for name, content in sorted(entries.items())]
+    manifest["entries"] = listed
+    manifest["source_fingerprint"] = hashlib.sha256(evidence_module._json_bytes(listed)).hexdigest()
+    entries["export-manifest.json"] = evidence_module._json_bytes(manifest)
+    tampered = evidence_module._write_zip(entries)
+    row = dict(export)
+    row["source_fingerprint"] = manifest["source_fingerprint"]
+    row["sha256"] = hashlib.sha256(tampered).hexdigest()
+    row["byte_length"] = len(tampered)
+
+    with pytest.raises(EvidenceExportError, match="export_integrity_invalid"):
+        evidence_module._verify_zip(
+            tampered,
+            row,
+            Path(context["app"].config["EVIDENCE_EXPORT_SCHEMA_PATH"]),
+        )
 
 
 def test_silence_deadline_and_get_never_accept(demo_runtime) -> None:
@@ -190,6 +395,21 @@ def test_dispute_preserves_positions_without_outcome_and_exports(demo_runtime) -
     assert opened.status_code == 302
     workflow = current_workflow(context["instance_root"], context["case_id"])
     assert workflow["state"] == "DISPUTED"
+    first_package = context["owner"].post(
+        f"/en/cases/{context['case_id']}/evidence-exports?download=1",
+        data={"csrf_token": csrf(context["owner"])},
+    )
+    assert first_package.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(first_package.data)) as archive:
+        assert json.loads(archive.read("records/dispute.json"))["positions"] == []
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        first_export_id = connection.execute(
+            "SELECT id FROM evidence_exports WHERE case_id = ? AND version_no = 1",
+            (context["case_id"],),
+        ).fetchone()[0]
+    finally:
+        connection.close()
     for client, text in ((context["owner"], "Client final position"), (context["contractor"], "Contractor final position")):
         assert client.post(
             f"/en/cases/{context['case_id']}/disputes/{workflow['active_dispute_id']}/positions",
@@ -202,7 +422,57 @@ def test_dispute_preserves_positions_without_outcome_and_exports(demo_runtime) -
         assert connection.execute("SELECT COUNT(*) FROM dispute_positions").fetchone()[0] == 2
     finally:
         connection.close()
-    assert context["owner"].post(f"/en/cases/{context['case_id']}/evidence-exports", data={"csrf_token": csrf(context["owner"])}).status_code == 302
+    superseded = context["owner"].get(
+        f"/en/cases/{context['case_id']}/evidence-exports/{first_export_id}/download"
+    )
+    assert superseded.status_code == 409
+    assert context["contractor"].get(
+        f"/en/cases/{context['case_id']}/evidence-exports/{first_export_id}/download"
+    ).status_code == 409
+    dashboard = context["owner"].get(f"/en/cases/{context['case_id']}/delivery")
+    assert dashboard.status_code == 200
+    assert b"Superseded by newer case evidence" in dashboard.data
+    assert f"/evidence-exports/{first_export_id}/download".encode("ascii") not in dashboard.data
+    current_package = context["owner"].post(
+        f"/en/cases/{context['case_id']}/evidence-exports?download=1",
+        data={"csrf_token": csrf(context["owner"])},
+    )
+    assert current_package.status_code == 200
+    assert current_package.headers["Content-Disposition"] == 'attachment; filename="evidence-2.zip"'
+    with zipfile.ZipFile(io.BytesIO(current_package.data)) as archive:
+        assert len(json.loads(archive.read("records/dispute.json"))["positions"]) == 2
+    current_dashboard = context["contractor"].get(
+        f"/en/cases/{context['case_id']}/delivery"
+    )
+    assert current_dashboard.status_code == 200
+    assert b"Current package" in current_dashboard.data
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        current_export_id = connection.execute(
+            "SELECT id FROM evidence_exports WHERE case_id = ? AND version_no = 2",
+            (context["case_id"],),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    reused = context["contractor"].post(
+        f"/en/cases/{context['case_id']}/evidence-exports?download=1",
+        data={"csrf_token": csrf(context["contractor"])},
+    )
+    assert reused.status_code == 200
+    assert reused.data == current_package.data
+    assert reused.headers["Content-Disposition"] == 'attachment; filename="evidence-2.zip"'
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        exports = connection.execute(
+            "SELECT id, version_no FROM evidence_exports WHERE case_id = ? ORDER BY version_no",
+            (context["case_id"],),
+        ).fetchall()
+        assert [tuple(row) for row in exports] == [
+            (first_export_id, 1),
+            (current_export_id, 2),
+        ]
+    finally:
+        connection.close()
 
 
 def test_admin_third_party_and_anonymous_cannot_access_delivery_or_export(demo_runtime) -> None:
@@ -368,6 +638,157 @@ def test_full_delivery_path_has_no_outbound_network_dependency(demo_runtime, mon
     assert context["owner"].post(f"/en/cases/{context['case_id']}/evidence-exports", data={"csrf_token": csrf(context["owner"])}).status_code == 302
 
 
+def test_case_b_delivery_mutation_completes_while_case_a_export_compresses(
+    demo_runtime, monkeypatch
+) -> None:
+    import app.services.evidence_export as export_module
+
+    case_a = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(case_a)
+    assert case_a["owner"].post(
+        f"/en/cases/{case_a['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(case_a["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    _inspect(case_a, "PASS", accept=True)
+    case_b = create_formal_context(demo_runtime)
+
+    entered_compression = Event()
+    release_compression = Event()
+    original_write_zip = export_module._write_zip
+    errors: list[BaseException] = []
+
+    def paused_write_zip(entries):
+        entered_compression.set()
+        if not release_compression.wait(timeout=10):
+            raise AssertionError("compression release timed out")
+        return original_write_zip(entries)
+
+    def export_case_a() -> None:
+        connection = connect_database(case_a["instance_root"] / "app.sqlite3")
+        try:
+            prepare_evidence_export(
+                connection,
+                case_a["instance_root"] / "data",
+                case_a["app"].config["DOCUMENT_ASSETS"],
+                case_a["case_id"],
+                case_a["owner_id"],
+                case_a["app"].config["EVIDENCE_EXPORT_SCHEMA_PATH"],
+            )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            connection.close()
+
+    monkeypatch.setattr(export_module, "_write_zip", paused_write_zip)
+    export_thread = Thread(target=export_case_a)
+    export_thread.start()
+    assert entered_compression.wait(timeout=10)
+
+    mutation_done = Event()
+
+    def mutate_case_b() -> None:
+        connection = connect_database(case_b["instance_root"] / "app.sqlite3")
+        try:
+            submit_delivery(
+                connection,
+                case_b["instance_root"] / "data",
+                case_b["app"].config["DOCUMENT_ASSETS"],
+                case_b["case_id"],
+                case_b["contractor_id"],
+                "Independent case delivery",
+                {
+                    case_b["criterion_id"]: (
+                        "Implemented the fixed criterion",
+                        "local-evidence-reference",
+                    )
+                },
+                {case_b["criterion_id"]: ("PASS", "Local check passed")},
+                str(uuid.uuid4()),
+            )
+            mutation_done.set()
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            connection.close()
+
+    mutation_thread = Thread(target=mutate_case_b)
+    mutation_thread.start()
+    assert mutation_done.wait(timeout=3), "case B waited for case A ZIP compression"
+    release_compression.set()
+    mutation_thread.join(timeout=10)
+    export_thread.join(timeout=10)
+    assert not mutation_thread.is_alive()
+    assert not export_thread.is_alive()
+    assert errors == []
+
+
+def test_same_case_source_change_during_compression_fails_export_cas(
+    demo_runtime, monkeypatch
+) -> None:
+    import app.services.evidence_export as export_module
+
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/disputes",
+        data={
+            "csrf_token": csrf(context["owner"]),
+            "expected_revision": str(workflow["revision"]),
+            "reason": "Evidence interpretation differs.",
+        },
+    ).status_code == 302
+    workflow = current_workflow(context["instance_root"], context["case_id"])
+
+    entered_compression = Event()
+    release_compression = Event()
+    original_write_zip = export_module._write_zip
+    outcome: list[str] = []
+
+    def paused_write_zip(entries):
+        entered_compression.set()
+        if not release_compression.wait(timeout=10):
+            raise AssertionError("compression release timed out")
+        return original_write_zip(entries)
+
+    def prepare() -> None:
+        connection = connect_database(context["instance_root"] / "app.sqlite3")
+        try:
+            prepare_evidence_export(
+                connection,
+                context["instance_root"] / "data",
+                context["app"].config["DOCUMENT_ASSETS"],
+                context["case_id"],
+                context["owner_id"],
+                context["app"].config["EVIDENCE_EXPORT_SCHEMA_PATH"],
+            )
+            outcome.append("unexpected-success")
+        except EvidenceExportError as error:
+            outcome.append(error.code)
+        finally:
+            connection.close()
+
+    monkeypatch.setattr(export_module, "_write_zip", paused_write_zip)
+    thread = Thread(target=prepare)
+    thread.start()
+    assert entered_compression.wait(timeout=10)
+    assert context["contractor"].post(
+        f"/en/cases/{context['case_id']}/disputes/{workflow['active_dispute_id']}/positions",
+        data={"csrf_token": csrf(context["contractor"]), "position_text": "Contractor position."},
+    ).status_code == 302
+    release_compression.set()
+    thread.join(timeout=10)
+    assert outcome == ["export_source_changed"]
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM evidence_exports WHERE case_id = ?", (context["case_id"],)
+        ).fetchone()[0] == 0
+    finally:
+        connection.close()
+    quarantine = context["instance_root"] / "data" / "cases" / context["case_id"] / "quarantine"
+    assert any(path.name.startswith("exports-") for path in quarantine.iterdir())
+
+
 def test_unexpected_error_response_and_log_exclude_private_content(demo_runtime, monkeypatch, caplog) -> None:
     context = create_formal_context(demo_runtime)
     private_sentinel = "PRIVATE-REQUEST-CONTENT-MUST-NOT-BE-LOGGED"
@@ -375,7 +796,10 @@ def test_unexpected_error_response_and_log_exclude_private_content(demo_runtime,
     def fail_safely(*_args, **_kwargs):
         raise RuntimeError(private_sentinel)
 
-    monkeypatch.setattr("app.routes.localized.load_delivery_dashboard", fail_safely)
+    monkeypatch.setattr(
+        "app.routes.localized.load_delivery_dashboard_with_export_status",
+        fail_safely,
+    )
     caplog.set_level("ERROR")
     response = context["owner"].get(f"/en/cases/{context['case_id']}/delivery")
     assert response.status_code == 500
@@ -383,7 +807,7 @@ def test_unexpected_error_response_and_log_exclude_private_content(demo_runtime,
     log_text = caplog.text
     assert private_sentinel not in body
     assert private_sentinel not in log_text
-    assert "/Users/" not in log_text
+    assert "/" + "Users/" not in log_text
     assert "request_failed correlation_id=" in log_text
 
 
@@ -809,8 +1233,53 @@ def test_concurrent_export_requests_converge_on_one_fixed_export(demo_runtime) -
     connection = connect_database(context["instance_root"] / "app.sqlite3")
     try:
         assert connection.execute("SELECT COUNT(*) FROM evidence_exports WHERE case_id = ?", (context["case_id"],)).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM case_timeline_events WHERE case_id = ? AND event_code = 'EVIDENCE_EXPORTED'",
+            (context["case_id"],),
+        ).fetchone()[0] == 1
     finally:
         connection.close()
+    case_root = context["instance_root"] / "data" / "cases" / context["case_id"]
+    assert len(list((case_root / "exports").iterdir())) == 1
+    assert list((case_root / "staging").iterdir()) == []
+    assert len([path for path in (case_root / "quarantine").iterdir() if path.name.startswith("exports-")]) == 1
+
+
+def test_export_db_failure_after_publish_rolls_back_and_quarantines(demo_runtime) -> None:
+    context = create_formal_context(demo_runtime)
+    workflow = _submit_delivery(context)
+    assert context["owner"].post(
+        f"/en/cases/{context['case_id']}/deliveries/{workflow['current_delivery_id']}/begin-inspection",
+        data={"csrf_token": csrf(context["owner"]), "expected_revision": str(workflow["revision"])},
+    ).status_code == 302
+    _inspect(context, "PASS", accept=True)
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        connection.execute(
+            "CREATE TRIGGER reject_evidence_export BEFORE INSERT ON evidence_exports "
+            "BEGIN SELECT RAISE(ABORT, 'forced_export_failure'); END"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="forced_export_failure"):
+            prepare_evidence_export(
+                connection,
+                context["instance_root"] / "data",
+                context["app"].config["DOCUMENT_ASSETS"],
+                context["case_id"],
+                context["owner_id"],
+                context["app"].config["EVIDENCE_EXPORT_SCHEMA_PATH"],
+            )
+        assert connection.execute(
+            "SELECT COUNT(*) FROM evidence_exports WHERE case_id = ?", (context["case_id"],)
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM case_timeline_events WHERE case_id = ? AND event_code = 'EVIDENCE_EXPORTED'",
+            (context["case_id"],),
+        ).fetchone()[0] == 0
+    finally:
+        connection.close()
+    case_root = context["instance_root"] / "data" / "cases" / context["case_id"]
+    assert list((case_root / "exports").iterdir()) == []
+    assert len([path for path in (case_root / "quarantine").iterdir() if path.name.startswith("exports-")]) == 1
 
 
 def test_twentieth_delivery_succeeds_and_twenty_first_fails_without_state_change(demo_runtime) -> None:
@@ -830,7 +1299,13 @@ def test_twentieth_delivery_succeeds_and_twenty_first_fails_without_state_change
     contractor_page = context["contractor"].get(f"/en/cases/{context['case_id']}/delivery")
     assert contractor_page.status_code == 200
     assert b"The 20-version delivery limit has been reached." in contractor_page.data
+    assert b"Delivery limit reached \xc2\xb7 Review the record or open a dispute" in contractor_page.data
+    assert b"Contractor action \xc2\xb7 Submit remediation" not in contractor_page.data
     assert f'action="/en/cases/{context["case_id"]}/deliveries"'.encode() not in contractor_page.data
+    owner_page = context["owner"].get(f"/en/cases/{context['case_id']}/delivery")
+    assert owner_page.status_code == 200
+    assert b"Delivery limit reached \xc2\xb7 Review the record or open a dispute" in owner_page.data
+    assert b"Waiting for remediation" not in owner_page.data
     before = dict(workflow)
     rejected = context["contractor"].post(
         f"/en/cases/{context['case_id']}/deliveries",

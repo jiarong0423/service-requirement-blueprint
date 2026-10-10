@@ -14,13 +14,16 @@ from reportlab.pdfbase import pdfmetrics
 from app.services.candidate_documents import (
     CandidateSnapshot,
     SourceSnapshot,
+    _human_document_lines,
+    _open_item_lines,
     _wrap_to_width,
     build_candidate_bundle,
 )
 from app.services.candidate_workflow import create_candidate, read_candidate_component
-from app.services.document_integrity import validate_candidate_pdf, validate_safe_svg
+from app.services.document_integrity import DocumentIntegrityError, validate_candidate_pdf, validate_safe_svg
 from app.services.json_contracts import JsonContractError, validate_json_a
 from app.db import connect_database
+from tests.slice4_helpers import valid_business_draft
 from tests.slice5_helpers import create_json_b_review
 
 
@@ -54,15 +57,153 @@ def test_candidate_bundle_binds_sources_and_has_safe_readable_outputs(demo_runti
         manifest = json.loads(manifest_raw)
         schema = json.loads(app.config["CANDIDATE_MANIFEST_SCHEMA_PATH"].read_text())
         Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
+        assert manifest["template_version"] == "candidate-document/1.4"
         assert manifest["sources"]["json_a"]["sha256"] == hashlib.sha256(context["json_a_raw"]).hexdigest()
         assert manifest["sources"]["json_b"]["sha256"] == hashlib.sha256(context["json_b_raw"]).hexdigest()
         assert manifest["artifacts"]["pdf"]["sha256"] == hashlib.sha256(pdf).hexdigest()
         assert manifest["artifacts"]["svg"]["sha256"] == hashlib.sha256(svg).hexdigest()
         assert "café" in context["json_b_raw"].decode("utf-8")
-        validate_candidate_pdf(pdf, ("Fixed document", context["case_id"]))
+        validate_candidate_pdf(pdf, ("Service Requirements and Delivery Confirmation", "Version 1"))
+        reader = PdfReader(io.BytesIO(pdf), strict=True)
+        pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        assert context["case_id"] not in pdf_text
+        assert manifest["sources"]["json_a"]["sha256"] not in pdf_text
+        assert manifest["sources"]["json_b"]["sha256"] not in pdf_text
+        assert "SHA-256" not in pdf_text
+        assert "one_time" not in pdf_text
+        assert "third_party" not in pdf_text
+        assert "JSON A" not in pdf_text
+        assert "JSON B" not in pdf_text
+        assert "Candidate" not in pdf_text
+        assert "Formalized" not in pdf_text
+        assert "client_admin" in pdf_text
+        assert "contractor_proposal" not in pdf_text
+        assert "Client Admin" not in pdf_text
         validate_safe_svg(svg, ("Final Requirement Blueprint",))
     finally:
         connection.close()
+
+
+def test_candidate_document_humanizes_only_declared_enum_fields(demo_runtime) -> None:
+    app, _instance_root, _passwords = demo_runtime
+    assets = app.config["DOCUMENT_ASSETS"]
+    rendered = _human_document_lines(
+        {
+            "responsible_party": "client",
+            "billing_kind": "one_time",
+            "cost_source": "third_party",
+            "role_code": "client_admin",
+            "status": "contractor_proposal",
+            "notes": "client third_party one_time",
+        },
+        assets,
+    )
+    text = "\n".join(rendered)
+    assert "Responsible Party: Client" in text
+    assert "Billing Kind: One-time" in text
+    assert "Cost Source: Third party" in text
+    assert "Role Code: Client Admin" in text
+    assert "Status: Contractor to propose" in text
+    assert "Notes: client third_party one_time" in text
+
+
+def test_candidate_pdf_names_distinct_open_items_with_same_section_and_resolution(demo_runtime) -> None:
+    context = create_json_b_review(demo_runtime)
+    document = json.loads(context["json_a_raw"])
+    matching = [
+        item for item in document["open_items"]
+        if item["section_code"] == "external_services_and_assets"
+        and item["resolution"] == "contractor_proposal_requested"
+    ]
+    assert {item["field_pointer"] for item in matching} >= {
+        "/services/0/status", "/services/1/status"
+    }
+    bundle = build_candidate_bundle(
+        _snapshot_from_context(context), context["app"].config["DOCUMENT_ASSETS"]
+    )
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(bundle.pdf)).pages)
+    open_items = text.split("Open Items", 1)[1].split("Contractor Proposal", 1)[0]
+    assert "Domain: Contractor proposal requested" in open_items
+    assert "Hosting: Contractor proposal requested" in open_items
+    assert "/services/0/status" not in open_items
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"field_pointer": "/services/999/status"}, "open_item_pointer_invalid"),
+        ({"field_pointer": "/items/0/requirement_level"}, "open_item_pointer_invalid"),
+        (
+            {"section_code": "features", "field_pointer": f"/items/{'9' * 5000}/requirement_level"},
+            "open_item_pointer_invalid",
+        ),
+        ({"resolution": "undecided"}, "open_item_pointer_mismatch"),
+    ],
+)
+def test_open_item_pdf_presentation_rejects_pointer_or_resolution_mismatch(
+    demo_runtime, change, error
+) -> None:
+    context = create_json_b_review(demo_runtime)
+    document = json.loads(context["json_a_raw"])
+    document["open_items"][0].update(change)
+    with pytest.raises(DocumentIntegrityError, match=error):
+        _open_item_lines(document, context["app"].config["DOCUMENT_ASSETS"])
+
+
+def test_open_item_pdf_presentation_requires_catalog_label(demo_runtime) -> None:
+    context = create_json_b_review(demo_runtime)
+    assets = context["app"].config["DOCUMENT_ASSETS"]
+    document = json.loads(context["json_a_raw"])
+    without_domain = replace(
+        assets,
+        catalog={key: value for key, value in assets.catalog.items() if key != "service.domain"},
+    )
+    with pytest.raises(DocumentIntegrityError, match="open_item_label_missing"):
+        _open_item_lines(document, without_domain)
+
+
+def test_contractor_authored_role_and_service_codes_remain_verbatim_in_html_and_new_pdf(
+    demo_runtime,
+) -> None:
+    draft = valid_business_draft()
+    draft["data_and_permissions"][0]["role_code"] = "iOS app-store_v2"
+    draft["third_party_services"][0]["service_code"] = "iOS app-store_v2"
+    context = create_json_b_review(demo_runtime, draft=draft)
+
+    proposal = context["owner"].get(
+        f"/en/cases/{context['case_id']}/json-b/reviews/1"
+    )
+    assert proposal.status_code == 200
+    assert proposal.data.count(b"iOS app-store_v2") == 2
+    assert b"Ios App Store V2" not in proposal.data
+
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        result = create_candidate(
+            connection,
+            context["instance_root"] / "data",
+            context["app"].config["SCHEMA_PATH"],
+            context["app"].config["JSON_B_SCHEMA_PATH"],
+            context["app"].config["CANDIDATE_MANIFEST_SCHEMA_PATH"],
+            context["app"].config["DOCUMENT_ASSETS"],
+            context["case_id"],
+            context["contractor_id"],
+        )
+        pdf = read_candidate_component(
+            connection,
+            context["instance_root"] / "data",
+            context["case_id"],
+            result.candidate_id,
+            context["owner_id"],
+            "document.pdf",
+        )
+    finally:
+        connection.close()
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf)).pages)
+    assert pdf_text.count("iOS app-store_v2") == 2
+    assert "Ios App Store V2" not in pdf_text
+    assert "Site Administrator" in pdf_text
+    assert "site_administrator" not in pdf_text
 
 
 def test_candidate_retry_returns_same_saved_identity(demo_runtime) -> None:

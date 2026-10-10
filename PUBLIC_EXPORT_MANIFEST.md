@@ -1,70 +1,25 @@
-# Public Export Manifest
+# Current Public Export Manifest
 
-Review date: 2026-10-07
+Review date: 2026-10-11  
+Source snapshot: `707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a`  
+Public repository: <https://github.com/jiarong0423/service-requirement-blueprint>.
 
-Source snapshot: `fc4b1dd0a6123736f01eded908c2b11599a7bf05`
+## Exact source identity
 
-Public repository: <https://github.com/jiarong0423/service-requirement-blueprint>
+`public-export-manifest.json` contains the source commit, tree, and byte length/SHA-256 of all **141** source files. It was produced from a clean local Git commit by `tools/build_public_candidate.py`. Private local commit history is not published. The normal public commit is a descendant of the existing public main, and its manifest binds the separate local source identity.
 
-Export decision: published after the learner's explicit authorization on 2026-10-07; later updates remain subject to the same allowlist and release gates
+## Allowed source and overlays
 
-## Allowed Paths
+Source paths are the exact builder inventory: stable root controls, `app/`, `assets/fonts/`, `migrations/`, `tests/`, four named `tools/` helpers, and explicitly named public `devpost/` planning/demo documents and media diagrams. `demo-capture-guide.md`, the 161.8-second narration/SRT, architecture and six-step PNG/SVG, and Mermaid in README are included. No wildcard permits the internal capture master.
 
-| Path | Classification | Reason |
-| --- | --- | --- |
-| `.gitattributes` | public configuration | Normalizes tracked text files. |
-| `.gitignore` | public configuration | Excludes local credentials, runtime data, generated case artifacts, caches, and learner profiles. |
-| `README.md` | public documentation | Contains factual setup, operation, scope, and verification instructions. |
-| `requirements.txt` | public dependency manifest | Pins the complete Python environment used by the PoC. |
-| `app/**` | public source | Flask application, schema, templates, static assets, security helpers, and workflows. |
-| `assets/fonts/**` | public third-party asset | Noto Sans TC font files plus their OFL license and provenance record. |
-| `migrations/**` | public source | Ordered SQLite schema migrations required by the application. |
-| `tests/**` | public verification | Deterministic functional, authorization, integrity, recovery, and evidence-export tests. |
-| `tools/**` | public tooling | Offline font-preflight and planning-document rendering helpers. |
-| `devpost/scope.md` | public planning evidence | Required approved Scope produced through the Devpost Learn workflow. |
-| `devpost/prd.md` | public planning evidence | Required approved product requirements produced through the Devpost Learn workflow. |
-| `devpost/spec.md` | public planning evidence | Required approved technical specification produced through the Devpost Learn workflow. |
-| `devpost/checklist.md` | public build evidence | Approved build slices, verification results, and learner gates without private profile content. |
-| `devpost/scope.html` | public review companion | Offline visual rendering of the approved Scope. |
-| `devpost/prd.html` | public review companion | Offline visual rendering of the approved PRD. |
-| `devpost/spec.html` | public review companion | Offline visual rendering of the approved Spec. |
-| `devpost/app-map.html` | public learning artifact | Offline map of the finished code path and verification evidence. |
-| `devpost/demo-guide.md` | public technical guide | Factual local demonstration steps; it is not submission narration. |
-| `devpost/ship-evidence.md` | public factual evidence | Records verified build facts and unresolved publication actions. |
-| `PUBLIC_EXPORT_MANIFEST.md` | public governance | Defines this allowlist and exclusion boundary. |
-| `SECURITY.md` | public security boundary | Documents local secret ownership, rotation, and responsible disclosure. |
-| `SECURITY_THREAT_MODEL.md` | public security design evidence | Describes assets, trust boundaries, threats, and controls. |
-| `PACKAGE_REPUTATION_EVIDENCE.md` | public dependency evidence | Records local package review scope and remaining limitations. |
-| `dependency-allowlist.md` | public dependency control | Restricts package-runner use to the documented pinned requirements install. |
-| `CODE_SECURITY_EVIDENCE.md` | public code-review evidence | Records the security-focused verification performed for this snapshot. |
-| `SECRET_SCAN_EVIDENCE.md` | public secret-scan evidence | Records candidate-only current-file and history-boundary checks. |
-| `LICENSE` | public license | MIT License selected by the learner for original project source and documentation. |
+Seven preserved/reviewed public overlays are `SECURITY.md`, `SECURITY_THREAT_MODEL.md`, `dependency-allowlist.md`, `CODE_SECURITY_EVIDENCE.md`, `PACKAGE_REPUTATION_EVIDENCE.md`, `SECRET_SCAN_EVIDENCE.md`, and this document. Two additional public evidence files are `security-evidence/semgrep-rules.json` and `security-evidence/verification.json`. The source manifest itself is generated. These overlays are reviewed separately and are not described as exact canonical source blobs.
 
-## Explicitly Excluded
+## Exclusion and rights boundary
 
-- The canonical repository's `.git/` directory and all prior commit history.
-- `.agents/**`; these local copies of the curriculum are not needed to run or judge the submission and are excluded from the sanitized snapshot.
-- `devpost/learner-profile.md` and `devpost/learner-profile.zh-TW.md`.
-- `logs/**`, including internal decision and runtime records.
-- `instance/**`, SQLite databases and sidecars, local secret keys, sessions, invitations, generated JSON, PDF, SVG, ZIP, delivery records, and demonstration case data.
-- `.env`, `.env.*`, credential files, private keys, tokens, browser state, and local authentication material.
-- `.venv/**`, Python bytecode, test caches, coverage reports, build output, and editor or operating-system metadata.
-- `docs/ai-generated/**`, screenshots, temporary review exports, scanner reports, and isolation output.
-- Local absolute paths, private workspace metadata, personal email addresses, and autosave author identities from the canonical Git history.
+Excluded: learner profile; local secrets and environment files; `instance/`; databases and sidecars; private case JSON/PDF/ZIP; recordings; raw private conversations; internal logs and output; browser profiles; private canonical Git history; environments, caches, and private absolute paths. No broad deletion or private-history rewrite occurs.
 
-## Rights Classification
+Original source/documentation uses the learner-selected MIT License. The bundled Noto Sans TC font files keep their SIL Open Font License and `assets/fonts/SOURCE.json` provenance. No video or third-party Python packages are redistributed here. README PNG diagrams are original project documentation.
 
-- Application source, tests, planning documents, diagrams, and factual technical guides were created for this project during the submission period.
-- Python packages are referenced as dependencies and are not redistributed in the repository.
-- The bundled Noto Sans TC font files are redistributed under the included SIL Open Font License in `assets/fonts/OFL.txt`; provenance is recorded in `assets/fonts/SOURCE.json`.
-- Original project source and documentation use the root MIT License selected on 2026-10-07.
+## Checks before synchronization
 
-## Required Verification
-
-- Confirm that the candidate contains only the paths listed above.
-- Run the complete test suite from the candidate root using the pinned local environment.
-- Confirm that only the command in `dependency-allowlist.md` is used to install dependencies.
-- Run the local release-boundary scanner and AI security export gate against the candidate root.
-- Review all scanner high findings by path and rule without exposing matched values.
-- Confirm that `LICENSE` exists and is visible at repository root.
-- Confirm that the learner's explicit authorization covers the repository name, public visibility, and exact sanitized candidate before each publication action.
+Exact source hashes, current documentation, full extracted-package regression plus focused final-delta tests, isolated loopback start/stop, independent static review, bounded SAST match disposition, redacted Gitleaks, release-boundary scan, and AI security export/rules gates are reviewed. After push, remote commit/tree and every public file must be read back and compared; zero delta closes synchronization. Source release does not certify five new browser journeys, human audiovisual review, cloud deployment, personal eligibility, or a submitted Devpost form.

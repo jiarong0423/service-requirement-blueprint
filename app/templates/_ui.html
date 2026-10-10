@@ -1,0 +1,95 @@
+{% macro human_state(state) -%}
+  {{- ui_state(state) -}}
+{%- endmacro %}
+
+{% set WORKFLOW_STAGES = [
+  ('clarify', 'Clarify', 'Define the requirement baseline.'),
+  ('quote', 'Quote', 'Set scope, price, and responsibilities.'),
+  ('review', 'Review', 'Resolve changes against the saved proposal.'),
+  ('confirm', 'Confirm', 'Both parties confirm the same saved version.'),
+  ('deliver', 'Deliver', 'Submit work against the confirmed agreement.'),
+  ('inspect', 'Inspect', 'Check each agreed acceptance criterion.'),
+  ('fix', 'Fix', 'Remediate the returned items.'),
+  ('evidence', 'Evidence', 'Preserve and download the case record.')
+] %}
+
+{% set WORKFLOW_STAGE_BY_STATE = {
+  'REQUIREMENT_DRAFT': 'clarify',
+  'INVITATION_PENDING': 'clarify',
+  'WAITING_JSON_A_IMPORT': 'clarify',
+  'CASE_ACTIVE': 'quote',
+  'JSON_B_PRIVATE_DRAFT': 'quote',
+  'JSON_B_REVIEW': 'review',
+  'CANDIDATE_REVIEW': 'confirm',
+  'FORMAL': 'deliver',
+  'DELIVERED': 'inspect',
+  'UNDER_ACCEPTANCE': 'inspect',
+  'REINSPECTION': 'inspect',
+  'REMEDIATION': 'fix',
+  'ACCEPTED': 'evidence',
+  'DISPUTED': 'evidence'
+} %}
+
+{% macro workflow_stage_label(state) -%}
+  {%- set current_stage = WORKFLOW_STAGE_BY_STATE.get(state) -%}
+  {%- set selected = namespace(label='Stage unavailable') -%}
+  {%- for code, label, description in WORKFLOW_STAGES -%}
+    {%- if code == current_stage -%}{%- set selected.label = label -%}{%- endif -%}
+  {%- endfor -%}
+  {{- selected.label -}}
+{%- endmacro %}
+
+{% macro human_issue_state(state) -%}
+  {{- ui_issue_state(state) -}}
+{%- endmacro %}
+
+{% macro human_issue_kind(kind) -%}
+  {{- ui_issue_kind(kind) -}}
+{%- endmacro %}
+
+{% macro human_value(value, field_name=none, contractor_authored=false) -%}
+  {%- if value is sameas true -%}<span>Yes</span>
+  {%- elif value is sameas false -%}<span>No</span>
+  {%- elif value is none -%}<span>Not applicable</span>
+  {%- elif value is string -%}<span>{{ ui_value(field_name, value, contractor_authored) }}</span>
+  {%- elif value is mapping -%}
+    <dl class="human-object">
+    {%- for key, item in value.items() if not key.endswith('_id') %}
+      <div><dt>{{ key|replace('_', ' ')|title }}</dt><dd>{{ human_value(item, key, contractor_authored) }}</dd></div>
+    {%- endfor %}
+    </dl>
+  {%- elif value is sequence -%}
+    {%- if value|length == 0 -%}<span>None</span>
+    {%- else -%}<ul class="human-list">{%- for item in value %}<li>{{ human_value(item, field_name, contractor_authored) }}</li>{%- endfor %}</ul>
+    {%- endif -%}
+  {%- else -%}<span>{{ value }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro workflow_drawer(current_stage=none) -%}
+  <details class="workflow-drawer">
+    <summary>View workflow</summary>
+    <ol class="workflow-list">
+      {% for code, label, description in WORKFLOW_STAGES %}
+      <li{% if current_stage == code %} class="workflow-current" aria-current="step"{% endif %}>
+        <strong>{{ label }}</strong>
+        {% if current_stage == code %}<span>{{ description }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </details>
+{%- endmacro %}
+
+{% macro context_bar(role, stage, status, task, current_stage=none) -%}
+  <section class="context-bar" data-ui="page-context">
+    <div class="context-role"><span>Role</span><strong data-ui="role">{{ role }}</strong></div>
+    <div class="context-stage"><span>Current stage</span><strong data-ui="status">{{ stage }}{% if status %} · {{ status }}{% endif %}</strong></div>
+    <div class="context-task"><span>Current task</span><strong data-ui="current-task">{{ task }}</strong></div>
+    {{ workflow_drawer(current_stage) }}
+  </section>
+{%- endmacro %}
+
+{% macro workflow_context_bar(role, state, status, task) -%}
+  {% set current_stage = WORKFLOW_STAGE_BY_STATE.get(state) %}
+  {{ context_bar(role, workflow_stage_label(state), status, task, current_stage) }}
+{%- endmacro %}

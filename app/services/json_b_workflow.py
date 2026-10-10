@@ -10,12 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.db import immediate_transaction
+from app.db import deferred_read_transaction, immediate_transaction
 from app.services.artifact_store import (
     ArtifactStoreError,
+    MAX_JSON_ARTIFACT_BYTES,
     install_json_artifact,
+    quarantine_json_artifact,
     read_verified,
-    remove_new_artifact,
 )
 from app.services.case_workflow import utc_now
 from app.services.document_integrity import DocumentAssets, ensure_supported_text
@@ -114,11 +115,60 @@ def _json_a_source(connection: sqlite3.Connection, case_id: str) -> sqlite3.Row:
 
 def _validate_source_file(data_root: Path, source: sqlite3.Row) -> None:
     try:
-        raw = read_verified(data_root, source["relative_path"], source["sha256"])
+        raw = read_verified(
+            data_root, source["relative_path"], source["sha256"], source["byte_length"],
+            max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
     except (ArtifactStoreError, OSError, ValueError) as error:
         raise JsonBWorkflowError("source_unavailable") from error
     if len(raw) != source["byte_length"]:
         raise JsonBWorkflowError("source_unavailable")
+
+
+def _row_token(row: sqlite3.Row | None, fields: tuple[str, ...]) -> tuple[object, ...] | None:
+    if row is None:
+        return None
+    return tuple(row[field] for field in fields)
+
+
+SOURCE_FIELDS = (
+    "artifact_id",
+    "document_id",
+    "version_no",
+    "schema_version",
+    "sha256",
+    "byte_length",
+    "relative_path",
+)
+
+
+DRAFT_CAS_FIELDS = (
+    "case_id",
+    "contractor_id",
+    "document_id",
+    "target_version",
+    "base_review_artifact_id",
+    "source_artifact_id",
+    "source_document_id",
+    "source_version_no",
+    "source_schema_version",
+    "source_sha256",
+    "source_byte_length",
+    "content_revision",
+    "current_export_artifact_id",
+)
+
+
+def _draft_cas_row(
+    connection: sqlite3.Connection,
+    case_id: str,
+    contractor_id: str,
+) -> sqlite3.Row | None:
+    columns = ", ".join(DRAFT_CAS_FIELDS)
+    return connection.execute(
+        f"SELECT {columns} FROM json_b_drafts WHERE case_id = ? AND contractor_id = ?",
+        (case_id, contractor_id),
+    ).fetchone()
 
 
 def decode_business_draft(raw: bytes) -> dict[str, Any]:
@@ -216,7 +266,13 @@ def _build_document(
     return document
 
 
-def _validate_document(document: dict[str, Any], schema_path: Path, *, now: datetime | None = None) -> None:
+def _validate_document(
+    document: dict[str, Any],
+    schema_path: Path,
+    *,
+    now: datetime | None = None,
+    require_future_expiry: bool = True,
+) -> None:
     try:
         validate_json_b(document, schema_path)
     except JsonContractError as error:
@@ -226,9 +282,14 @@ def _validate_document(document: dict[str, Any], schema_path: Path, *, now: date
         raise JsonBWorkflowError("totals_mismatch")
     generated = _parse_utc(str(document["generated_at"]))
     expiry = _parse_utc(str(document["quote_expires_at"]))
-    if expiry <= generated:
+    if require_future_expiry and expiry <= generated:
         raise JsonBWorkflowError("quote_expiry_invalid")
     if now is not None and expiry <= now.astimezone(timezone.utc):
+        raise JsonBWorkflowError("quote_expired")
+
+
+def _require_unexpired_quote(document: dict[str, Any], now: datetime) -> None:
+    if _parse_utc(str(document["quote_expires_at"])) <= now.astimezone(timezone.utc):
         raise JsonBWorkflowError("quote_expired")
 
 
@@ -242,7 +303,7 @@ def save_private_draft(
     raw_business_draft: bytes,
 ) -> int:
     business = decode_business_draft(raw_business_draft)
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         case = _contractor_case(connection, case_id, contractor_id)
         source = _json_a_source(connection, case_id)
         _validate_source_file(data_root, source)
@@ -258,11 +319,7 @@ def save_private_draft(
             (case_id,),
         ).fetchone()[0]
         document_id = str(uuid.uuid4()) if current is None else current["document_id"]
-        draft_like = {
-            "data_json": json.dumps(business, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-            "document_id": document_id,
-            "target_version": target_version,
-        }
+        data_json = json.dumps(business, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         preview = {
             "schema_version": "json-b/1.0",
             "document_type": "contractor_proposal",
@@ -274,7 +331,27 @@ def save_private_draft(
             **business,
             "computed_fee_totals": compute_fee_totals(business["fee_items"]),
         }
-        _validate_document(preview, schema_path)
+        _validate_document(preview, schema_path, require_future_expiry=False)
+        case_token = (case["state"], case["current_json_b_artifact_id"], case["content_revision"])
+        source_token = _row_token(source, SOURCE_FIELDS)
+        draft_token = _row_token(current, DRAFT_CAS_FIELDS)
+
+    with immediate_transaction(connection):
+        locked_case = _contractor_case(connection, case_id, contractor_id)
+        locked_source = _json_a_source(connection, case_id)
+        locked_current = _draft_cas_row(connection, case_id, contractor_id)
+        locked_target_version = connection.execute(
+            "SELECT COALESCE(MAX(version_no), 0) + 1 FROM json_b_versions WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()[0]
+        if (
+            (locked_case["state"], locked_case["current_json_b_artifact_id"], locked_case["content_revision"])
+            != case_token
+            or _row_token(locked_source, SOURCE_FIELDS) != source_token
+            or _row_token(locked_current, DRAFT_CAS_FIELDS) != draft_token
+            or locked_target_version != target_version
+        ):
+            raise JsonBWorkflowError("draft_conflict")
         next_revision = current_revision + 1
         now_text = utc_now()
         if current is None:
@@ -289,14 +366,14 @@ def save_private_draft(
                     contractor_id,
                     document_id,
                     target_version,
-                    case["current_json_b_artifact_id"],
-                    source["artifact_id"],
-                    source["document_id"],
-                    source["version_no"],
-                    source["schema_version"],
-                    source["sha256"],
-                    source["byte_length"],
-                    draft_like["data_json"],
+                    locked_case["current_json_b_artifact_id"],
+                    locked_source["artifact_id"],
+                    locked_source["document_id"],
+                    locked_source["version_no"],
+                    locked_source["schema_version"],
+                    locked_source["sha256"],
+                    locked_source["byte_length"],
+                    data_json,
                     now_text,
                     now_text,
                 ),
@@ -320,14 +397,14 @@ def save_private_draft(
                 "current_export_artifact_id = NULL, updated_at = ? WHERE case_id = ? AND contractor_id = ?",
                 (
                     target_version,
-                    case["current_json_b_artifact_id"],
-                    source["artifact_id"],
-                    source["document_id"],
-                    source["version_no"],
-                    source["schema_version"],
-                    source["sha256"],
-                    source["byte_length"],
-                    draft_like["data_json"],
+                    locked_case["current_json_b_artifact_id"],
+                    locked_source["artifact_id"],
+                    locked_source["document_id"],
+                    locked_source["version_no"],
+                    locked_source["schema_version"],
+                    locked_source["sha256"],
+                    locked_source["byte_length"],
+                    data_json,
                     next_revision,
                     now_text,
                     case_id,
@@ -352,50 +429,103 @@ def export_private_draft(
 ) -> ExportResult:
     relative_path: str | None = None
     artifact_id = str(uuid.uuid4())
-    try:
-        with immediate_transaction(connection):
-            _contractor_case(connection, case_id, contractor_id)
-            draft = connection.execute(
-                "SELECT * FROM json_b_drafts WHERE case_id = ? AND contractor_id = ?",
-                (case_id, contractor_id),
+    existing_token: tuple[object, ...] | None = None
+    with deferred_read_transaction(connection):
+        case = _contractor_case(connection, case_id, contractor_id)
+        draft = connection.execute(
+            "SELECT * FROM json_b_drafts WHERE case_id = ? AND contractor_id = ?",
+            (case_id, contractor_id),
+        ).fetchone()
+        if draft is None or draft["content_revision"] != expected_revision:
+            raise JsonBWorkflowError("draft_conflict")
+        if draft["current_export_artifact_id"] is not None:
+            existing = connection.execute(
+                "SELECT e.artifact_id, e.state, a.relative_path, a.sha256, a.byte_length, "
+                "a.visibility, a.lifecycle FROM json_b_private_exports AS e "
+                "JOIN artifacts AS a ON a.id = e.artifact_id "
+                "WHERE e.artifact_id = ? AND e.draft_revision = ?",
+                (draft["current_export_artifact_id"], expected_revision),
             ).fetchone()
-            if draft is None or draft["content_revision"] != expected_revision:
-                raise JsonBWorkflowError("draft_conflict")
-            if draft["current_export_artifact_id"] is not None:
-                existing = connection.execute(
-                    "SELECT e.artifact_id, a.relative_path, a.sha256, a.byte_length "
-                    "FROM json_b_private_exports AS e JOIN artifacts AS a ON a.id = e.artifact_id "
-                    "WHERE e.artifact_id = ? AND e.draft_revision = ? AND e.state = 'ACTIVE' "
-                    "AND a.visibility = 'private' AND a.lifecycle = 'active'",
-                    (draft["current_export_artifact_id"], expected_revision),
-                ).fetchone()
-                if existing is not None:
-                    try:
-                        stored = read_verified(data_root, existing["relative_path"], existing["sha256"])
-                    except (ArtifactStoreError, OSError, ValueError) as error:
-                        raise JsonBWorkflowError("export_unavailable") from error
-                    if len(stored) != existing["byte_length"]:
-                        raise JsonBWorkflowError("export_unavailable")
-                    return ExportResult(existing["artifact_id"], expected_revision, False)
-            source = _json_a_source(connection, case_id)
-            _validate_source_file(data_root, source)
-            for column, value in (
-                ("source_artifact_id", source["artifact_id"]),
-                ("source_document_id", source["document_id"]),
-                ("source_version_no", source["version_no"]),
-                ("source_schema_version", source["schema_version"]),
-                ("source_sha256", source["sha256"]),
-                ("source_byte_length", source["byte_length"]),
+            if (
+                existing is not None
+                and existing["state"] == "ACTIVE"
+                and existing["visibility"] == "private"
+                and existing["lifecycle"] == "active"
             ):
-                if draft[column] != value:
-                    raise JsonBWorkflowError("source_mismatch")
-            document = _build_document(case_id, draft, source, utc_now())
-            if document_assets is not None:
-                ensure_supported_text(json.dumps(document, ensure_ascii=False), document_assets)
-            _validate_document(document, schema_path)
-            raw = encode_json_once(document)
-            digest = sha256_bytes(raw)
-            relative_path = install_json_artifact(data_root, case_id, artifact_id, raw)
+                try:
+                    stored = read_verified(
+                        data_root, existing["relative_path"], existing["sha256"], existing["byte_length"],
+                        max_bytes=MAX_JSON_ARTIFACT_BYTES,
+                    )
+                except (ArtifactStoreError, OSError, ValueError) as error:
+                    raise JsonBWorkflowError("export_unavailable") from error
+                if len(stored) != existing["byte_length"]:
+                    raise JsonBWorkflowError("export_unavailable")
+                try:
+                    existing_document = decode_strict_json(stored)
+                except JsonContractError as error:
+                    raise JsonBWorkflowError("export_unavailable") from error
+                if not isinstance(existing_document, dict):
+                    raise JsonBWorkflowError("export_unavailable")
+                _validate_document(existing_document, schema_path, now=datetime.now(timezone.utc))
+                existing_token = tuple(existing)
+        source = _json_a_source(connection, case_id)
+        _validate_source_file(data_root, source)
+        for column, value in (
+            ("source_artifact_id", source["artifact_id"]),
+            ("source_document_id", source["document_id"]),
+            ("source_version_no", source["version_no"]),
+            ("source_schema_version", source["schema_version"]),
+            ("source_sha256", source["sha256"]),
+            ("source_byte_length", source["byte_length"]),
+        ):
+            if draft[column] != value:
+                raise JsonBWorkflowError("source_mismatch")
+        case_token = (case["state"], case["current_json_b_artifact_id"], case["content_revision"])
+        draft_token = _row_token(draft, DRAFT_CAS_FIELDS)
+        source_token = _row_token(source, SOURCE_FIELDS)
+
+    if existing_token is not None:
+        with immediate_transaction(connection):
+            locked_case = _contractor_case(connection, case_id, contractor_id)
+            locked_draft = _draft_cas_row(connection, case_id, contractor_id)
+            locked_existing = connection.execute(
+                "SELECT e.artifact_id, e.state, a.relative_path, a.sha256, a.byte_length, "
+                "a.visibility, a.lifecycle FROM json_b_private_exports AS e "
+                "JOIN artifacts AS a ON a.id = e.artifact_id "
+                "WHERE e.artifact_id = ? AND e.draft_revision = ?",
+                (draft["current_export_artifact_id"], expected_revision),
+            ).fetchone()
+            if (
+                (locked_case["state"], locked_case["current_json_b_artifact_id"], locked_case["content_revision"])
+                != case_token
+                or _row_token(locked_draft, DRAFT_CAS_FIELDS) != draft_token
+                or locked_existing is None
+                or tuple(locked_existing) != existing_token
+            ):
+                raise JsonBWorkflowError("draft_conflict")
+            _require_unexpired_quote(existing_document, datetime.now(timezone.utc))
+        return ExportResult(str(existing_token[0]), expected_revision, False)
+
+    try:
+        document = _build_document(case_id, draft, source, utc_now())
+        if document_assets is not None:
+            ensure_supported_text(json.dumps(document, ensure_ascii=False), document_assets)
+        _validate_document(document, schema_path, now=datetime.now(timezone.utc))
+        raw = encode_json_once(document)
+        digest = sha256_bytes(raw)
+        relative_path = install_json_artifact(data_root, case_id, artifact_id, raw)
+        with immediate_transaction(connection):
+            locked_case = _contractor_case(connection, case_id, contractor_id)
+            locked_draft = _draft_cas_row(connection, case_id, contractor_id)
+            locked_source = _json_a_source(connection, case_id)
+            if (
+                (locked_case["state"], locked_case["current_json_b_artifact_id"], locked_case["content_revision"])
+                != case_token
+                or _row_token(locked_draft, DRAFT_CAS_FIELDS) != draft_token
+                or _row_token(locked_source, SOURCE_FIELDS) != source_token
+            ):
+                raise JsonBWorkflowError("draft_conflict")
             artifact_version = connection.execute(
                 "SELECT COALESCE(MAX(version_no), 0) + 1 FROM artifacts "
                 "WHERE case_id = ? AND kind = 'json_b_private_export'",
@@ -429,25 +559,62 @@ def export_private_draft(
                     contractor_id,
                     expected_revision,
                     draft["target_version"],
-                    source["artifact_id"],
-                    source["document_id"],
-                    source["version_no"],
-                    source["schema_version"],
-                    source["sha256"],
-                    source["byte_length"],
+                    locked_source["artifact_id"],
+                    locked_source["document_id"],
+                    locked_source["version_no"],
+                    locked_source["schema_version"],
+                    locked_source["sha256"],
+                    locked_source["byte_length"],
                     now_text,
                 ),
             )
-            connection.execute(
+            updated = connection.execute(
                 "UPDATE json_b_drafts SET current_export_artifact_id = ?, updated_at = ? "
-                "WHERE case_id = ? AND contractor_id = ? AND content_revision = ?",
+                "WHERE case_id = ? AND contractor_id = ? AND content_revision = ? "
+                "AND current_export_artifact_id IS NULL",
                 (artifact_id, now_text, case_id, contractor_id, expected_revision),
             )
+            if updated.rowcount != 1:
+                raise JsonBWorkflowError("draft_conflict")
+            _require_unexpired_quote(document, datetime.now(timezone.utc))
         return ExportResult(artifact_id, expected_revision, True)
-    except BaseException:
+    except BaseException as error:
         if relative_path is not None:
-            remove_new_artifact(data_root, relative_path)
-        raise
+            try:
+                quarantine_json_artifact(data_root, case_id, artifact_id)
+            except (ArtifactStoreError, OSError) as quarantine_error:
+                raise JsonBWorkflowError("export_quarantine_failed") from quarantine_error
+        if isinstance(error, JsonBWorkflowError) and error.code == "draft_conflict":
+            winner_query = (
+                "SELECT e.artifact_id, a.relative_path, a.sha256, a.byte_length "
+                "FROM json_b_drafts AS d "
+                "JOIN json_b_private_exports AS e ON e.artifact_id = d.current_export_artifact_id "
+                "JOIN artifacts AS a ON a.id = e.artifact_id "
+                "WHERE d.case_id = ? AND d.contractor_id = ? AND d.content_revision = ? "
+                "AND e.draft_revision = ? AND e.state = 'ACTIVE' "
+                "AND a.visibility = 'private' AND a.lifecycle = 'active'"
+            )
+            winner_args = (case_id, contractor_id, expected_revision, expected_revision)
+            winner = connection.execute(winner_query, winner_args).fetchone()
+            if winner is not None:
+                try:
+                    winner_raw = read_verified(
+                        data_root, winner["relative_path"], winner["sha256"], winner["byte_length"],
+                        max_bytes=MAX_JSON_ARTIFACT_BYTES,
+                    )
+                    winner_document = decode_strict_json(winner_raw)
+                except (ArtifactStoreError, OSError, ValueError, JsonContractError) as winner_error:
+                    raise JsonBWorkflowError("export_unavailable") from winner_error
+                if len(winner_raw) != winner["byte_length"] or not isinstance(winner_document, dict):
+                    raise JsonBWorkflowError("export_unavailable")
+                _validate_document(winner_document, schema_path, now=datetime.now(timezone.utc))
+                with immediate_transaction(connection):
+                    locked_winner = connection.execute(winner_query, winner_args).fetchone()
+                    if locked_winner is None or tuple(locked_winner) != tuple(winner):
+                        raise JsonBWorkflowError("draft_conflict")
+                    _require_unexpired_quote(winner_document, datetime.now(timezone.utc))
+                    return ExportResult(winner["artifact_id"], expected_revision, False)
+        raise error
 
 
 def _source_matches_document(source: sqlite3.Row, document: dict[str, Any]) -> bool:
@@ -465,25 +632,7 @@ def submit_private_export(
     *,
     now: datetime | None = None,
 ) -> ReviewResult:
-    _contractor_case(connection, case_id, contractor_id)
-    owned_export = connection.execute(
-        "SELECT state FROM json_b_private_exports WHERE artifact_id = ? AND case_id = ? "
-        "AND contractor_id = ?",
-        (artifact_id, case_id, contractor_id),
-    ).fetchone()
-    if owned_export is None:
-        raise JsonBWorkflowError("export_unavailable")
-    parsed: dict[str, Any] | None = None
-    if owned_export["state"] == "ACTIVE":
-        try:
-            candidate = decode_strict_json(uploaded_raw)
-        except JsonContractError as error:
-            raise JsonBWorkflowError("json_b_invalid") from error
-        if not isinstance(candidate, dict):
-            raise JsonBWorkflowError("json_b_invalid")
-        _validate_document(candidate, schema_path)
-        parsed = candidate
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         case = _contractor_case(connection, case_id, contractor_id)
         export = connection.execute(
             "SELECT e.*, a.relative_path, a.sha256, a.byte_length, a.visibility, a.lifecycle "
@@ -493,6 +642,21 @@ def submit_private_export(
         ).fetchone()
         if export is None:
             raise JsonBWorkflowError("export_unavailable")
+        try:
+            stored = read_verified(
+                data_root, export["relative_path"], export["sha256"], export["byte_length"],
+                max_bytes=MAX_JSON_ARTIFACT_BYTES,
+            )
+        except (ArtifactStoreError, OSError, ValueError) as error:
+            raise JsonBWorkflowError("export_unavailable") from error
+        if (
+            len(uploaded_raw) != export["byte_length"]
+            or sha256_bytes(uploaded_raw) != export["sha256"]
+            or not hmac.compare_digest(stored, uploaded_raw)
+        ):
+            raise JsonBWorkflowError("exact_bytes_required")
+        case_token = (case["state"], case["current_json_b_artifact_id"], case["content_revision"])
+        export_token = tuple(export)
         if export["state"] == "SUBMITTED":
             review = connection.execute(
                 "SELECT version_no FROM json_b_versions WHERE artifact_id = ? AND case_id = ?",
@@ -500,73 +664,105 @@ def submit_private_export(
             ).fetchone()
             if review is None:
                 raise JsonBWorkflowError("export_unavailable")
-            try:
-                stored = read_verified(data_root, export["relative_path"], export["sha256"])
-            except (ArtifactStoreError, OSError, ValueError) as error:
-                raise JsonBWorkflowError("export_unavailable") from error
-            if (
-                len(uploaded_raw) != export["byte_length"]
-                or sha256_bytes(uploaded_raw) != export["sha256"]
-                or not hmac.compare_digest(stored, uploaded_raw)
-            ):
-                raise JsonBWorkflowError("exact_bytes_required")
-            return ReviewResult(artifact_id, review["version_no"], False)
-        if export["state"] != "ACTIVE" or export["visibility"] != "private" or export["lifecycle"] != "active":
-            raise JsonBWorkflowError("export_unavailable")
-        if parsed is None:
+            review_version = review["version_no"]
+            parsed = None
+            draft = None
+            source = None
+            draft_token = None
+            source_token = None
+            old_token = None
+        elif export["state"] == "ACTIVE" and export["visibility"] == "private" and export["lifecycle"] == "active":
             try:
                 candidate = decode_strict_json(uploaded_raw)
             except JsonContractError as error:
                 raise JsonBWorkflowError("json_b_invalid") from error
             if not isinstance(candidate, dict):
                 raise JsonBWorkflowError("json_b_invalid")
+            _validate_document(candidate, schema_path)
             parsed = candidate
-        _validate_document(parsed, schema_path, now=now or datetime.now(timezone.utc))
-        draft = connection.execute(
-            "SELECT * FROM json_b_drafts WHERE case_id = ? AND contractor_id = ?",
-            (case_id, contractor_id),
+            draft = connection.execute(
+                "SELECT * FROM json_b_drafts WHERE case_id = ? AND contractor_id = ?",
+                (case_id, contractor_id),
+            ).fetchone()
+            if (
+                draft is None
+                or draft["content_revision"] != export["draft_revision"]
+                or draft["current_export_artifact_id"] != artifact_id
+            ):
+                raise JsonBWorkflowError("draft_conflict")
+            source = _json_a_source(connection, case_id)
+            _validate_source_file(data_root, source)
+            if not _source_matches_document(source, parsed):
+                raise JsonBWorkflowError("source_mismatch")
+            if parsed.get("case_id") != case_id:
+                raise JsonBWorkflowError("source_mismatch")
+            if parsed.get("document_id") != draft["document_id"] or parsed.get("version") != export["target_version"]:
+                raise JsonBWorkflowError("source_mismatch")
+            draft_token = _row_token(draft, DRAFT_CAS_FIELDS)
+            source_token = _row_token(source, SOURCE_FIELDS)
+            old = connection.execute(
+                "SELECT artifact_id FROM json_b_versions WHERE case_id = ? AND state = 'CURRENT'",
+                (case_id,),
+            ).fetchone()
+            old_token = None if old is None else old["artifact_id"]
+            review_version = None
+        else:
+            raise JsonBWorkflowError("export_unavailable")
+
+    with immediate_transaction(connection):
+        locked_case = _contractor_case(connection, case_id, contractor_id)
+        locked_export = connection.execute(
+            "SELECT e.*, a.relative_path, a.sha256, a.byte_length, a.visibility, a.lifecycle "
+            "FROM json_b_private_exports AS e JOIN artifacts AS a ON a.id = e.artifact_id "
+            "WHERE e.artifact_id = ? AND e.case_id = ? AND e.contractor_id = ?",
+            (artifact_id, case_id, contractor_id),
         ).fetchone()
         if (
-            draft is None
-            or draft["content_revision"] != export["draft_revision"]
-            or draft["current_export_artifact_id"] != artifact_id
+            (locked_case["state"], locked_case["current_json_b_artifact_id"], locked_case["content_revision"])
+            != case_token
+            or locked_export is None
+            or tuple(locked_export) != export_token
         ):
             raise JsonBWorkflowError("draft_conflict")
-        try:
-            stored = read_verified(data_root, export["relative_path"], export["sha256"])
-        except (ArtifactStoreError, OSError, ValueError) as error:
-            raise JsonBWorkflowError("export_unavailable") from error
-        if len(uploaded_raw) != export["byte_length"] or sha256_bytes(uploaded_raw) != export["sha256"]:
-            raise JsonBWorkflowError("exact_bytes_required")
-        if not hmac.compare_digest(stored, uploaded_raw):
-            raise JsonBWorkflowError("exact_bytes_required")
-        source = _json_a_source(connection, case_id)
-        _validate_source_file(data_root, source)
-        if not _source_matches_document(source, parsed):
-            raise JsonBWorkflowError("source_mismatch")
-        if parsed.get("case_id") != case_id:
-            raise JsonBWorkflowError("source_mismatch")
-        if parsed.get("document_id") != draft["document_id"] or parsed.get("version") != export["target_version"]:
-            raise JsonBWorkflowError("source_mismatch")
-        now_text = utc_now()
-        old = connection.execute(
+        if parsed is None:
+            locked_review = connection.execute(
+                "SELECT version_no FROM json_b_versions WHERE artifact_id = ? AND case_id = ?",
+                (artifact_id, case_id),
+            ).fetchone()
+            if locked_review is None or locked_review["version_no"] != review_version:
+                raise JsonBWorkflowError("export_unavailable")
+            return ReviewResult(artifact_id, review_version, False)
+
+        locked_draft = _draft_cas_row(connection, case_id, contractor_id)
+        locked_source = _json_a_source(connection, case_id)
+        locked_old = connection.execute(
             "SELECT artifact_id FROM json_b_versions WHERE case_id = ? AND state = 'CURRENT'",
             (case_id,),
         ).fetchone()
-        if old is not None:
+        if (
+            _row_token(locked_draft, DRAFT_CAS_FIELDS) != draft_token
+            or _row_token(locked_source, SOURCE_FIELDS) != source_token
+            or (None if locked_old is None else locked_old["artifact_id"]) != old_token
+        ):
+            raise JsonBWorkflowError("draft_conflict")
+        effective_now = now or datetime.now(timezone.utc)
+        if _parse_utc(str(parsed["quote_expires_at"])) <= effective_now.astimezone(timezone.utc):
+            raise JsonBWorkflowError("quote_expired")
+        now_text = utc_now()
+        if locked_old is not None:
             connection.execute(
                 "UPDATE json_b_versions SET state = 'SUPERSEDED', superseded_at = ? "
                 "WHERE artifact_id = ? AND state = 'CURRENT'",
-                (now_text, old["artifact_id"]),
+                (now_text, locked_old["artifact_id"]),
             )
             connection.execute(
                 "UPDATE artifacts SET lifecycle = 'superseded' WHERE id = ? AND lifecycle = 'active'",
-                (old["artifact_id"],),
+                (locked_old["artifact_id"],),
             )
         connection.execute(
             "UPDATE artifacts SET kind = 'json_b', version_no = ?, visibility = 'party_only' "
             "WHERE id = ? AND kind = 'json_b_private_export' AND visibility = 'private' AND lifecycle = 'active'",
-            (export["target_version"], artifact_id),
+            (locked_export["target_version"], artifact_id),
         )
         connection.execute(
             "INSERT INTO json_b_versions(artifact_id, case_id, contractor_id, document_id, version_no, "
@@ -580,12 +776,12 @@ def submit_private_export(
                 contractor_id,
                 parsed["document_id"],
                 parsed["version"],
-                source["artifact_id"],
-                source["document_id"],
-                source["version_no"],
-                source["schema_version"],
-                source["sha256"],
-                source["byte_length"],
+                locked_source["artifact_id"],
+                locked_source["document_id"],
+                locked_source["version_no"],
+                locked_source["schema_version"],
+                locked_source["sha256"],
+                locked_source["byte_length"],
                 parsed["quote_expires_at"],
                 now_text,
             ),
@@ -641,7 +837,7 @@ def load_review(
     ).fetchone()
     if actor is None or actor["status"] != "active" or actor["system_role"] != "member":
         raise JsonBWorkflowError("review_unavailable")
-    readable_states = (*ACTIVE_CASE_STATES, "CANDIDATE_REVIEW")
+    readable_states = (*ACTIVE_CASE_STATES, "CANDIDATE_REVIEW", "FORMAL")
     placeholders = ",".join("?" for _ in readable_states)
     row = connection.execute(
         "SELECT v.*, a.relative_path, a.sha256, a.byte_length, a.lifecycle "
@@ -658,13 +854,70 @@ def load_review(
 
 def read_review_bytes(data_root: Path, row: sqlite3.Row) -> tuple[dict[str, Any], bytes]:
     try:
-        raw = read_verified(data_root, row["relative_path"], row["sha256"])
+        raw = read_verified(
+            data_root, row["relative_path"], row["sha256"], row["byte_length"],
+            max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
         document = decode_strict_json(raw)
     except (ArtifactStoreError, JsonContractError, OSError, ValueError) as error:
         raise JsonBWorkflowError("review_unavailable") from error
     if not isinstance(document, dict) or len(raw) != row["byte_length"]:
         raise JsonBWorkflowError("review_unavailable")
     return document, raw
+
+
+def reconcile_json_artifact_storage(connection: sqlite3.Connection, data_root: Path) -> None:
+    """Quarantine durable JSON artifact directories that have no database row."""
+    root = data_root.resolve()
+    cases_root = root / "cases"
+    if not root.is_dir() or root.is_symlink() or (cases_root.exists() and (not cases_root.is_dir() or cases_root.is_symlink())):
+        raise JsonBWorkflowError("json_artifact_storage_invalid")
+    rows = connection.execute(
+        "SELECT id, case_id, relative_path, sha256, byte_length FROM artifacts "
+        "WHERE relative_path LIKE 'cases/%/artifacts/%/content.json'"
+    ).fetchall()
+    expected: dict[tuple[str, str], sqlite3.Row] = {}
+    for row in rows:
+        expected[(row["case_id"], row["id"])] = row
+        try:
+            raw = read_verified(
+                data_root, row["relative_path"], row["sha256"], row["byte_length"],
+                max_bytes=MAX_JSON_ARTIFACT_BYTES,
+            )
+        except (ArtifactStoreError, OSError, ValueError) as error:
+            raise JsonBWorkflowError("json_artifact_storage_invalid") from error
+        if len(raw) != row["byte_length"]:
+            raise JsonBWorkflowError("json_artifact_storage_invalid")
+    if not cases_root.exists():
+        return
+    for case_directory in cases_root.iterdir():
+        if case_directory.is_symlink() or not case_directory.is_dir():
+            raise JsonBWorkflowError("json_artifact_storage_invalid")
+        artifacts_root = case_directory / "artifacts"
+        if not artifacts_root.exists():
+            continue
+        if artifacts_root.is_symlink() or not artifacts_root.is_dir():
+            raise JsonBWorkflowError("json_artifact_storage_invalid")
+        try:
+            case_id = str(uuid.UUID(case_directory.name))
+        except ValueError as error:
+            raise JsonBWorkflowError("json_artifact_storage_invalid") from error
+        if case_id != case_directory.name:
+            raise JsonBWorkflowError("json_artifact_storage_invalid")
+        for artifact_directory in list(artifacts_root.iterdir()):
+            if artifact_directory.is_symlink() or not artifact_directory.is_dir():
+                raise JsonBWorkflowError("json_artifact_storage_invalid")
+            try:
+                artifact_id = str(uuid.UUID(artifact_directory.name))
+            except ValueError as error:
+                raise JsonBWorkflowError("json_artifact_storage_invalid") from error
+            if artifact_id != artifact_directory.name:
+                raise JsonBWorkflowError("json_artifact_storage_invalid")
+            if (case_id, artifact_id) not in expected:
+                try:
+                    quarantine_json_artifact(data_root, case_id, artifact_id)
+                except (ArtifactStoreError, OSError) as error:
+                    raise JsonBWorkflowError("json_artifact_storage_invalid") from error
 
 
 def validate_objection_pointer(document: dict[str, Any], pointer: str) -> None:

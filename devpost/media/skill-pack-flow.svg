@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="790" viewBox="0 0 1600 790">
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#346d68" /></marker></defs>
+<rect width="1600" height="790" fill="#f6f3ed" />
+<text x="68" y="76" font-family="Noto Sans TC, sans-serif" font-size="40" font-weight="700" fill="#223b3a">Devpost Learn Skill Pack · Six Steps</text>
+<text x="68" y="120" font-family="Noto Sans TC, sans-serif" font-size="23" font-weight="400" fill="#223b3a">Evidence map for this project; a document is not independent proof of learner participation.</text>
+<path d="M505 250 L570 250" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M1020 250 L1085 250" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M1315 325 L1315 380 L285 380 L285 450" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M505 535 L570 535" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M1020 535 L1085 535" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<rect x="65" y="180" width="440" height="145" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="90" y="222" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">01 · Start</text>
+<text x="90" y="258" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Clarify the idea and learning context</text>
+<text x="90" y="289" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Learner profile remains private</text>
+<rect x="580" y="180" width="440" height="145" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="605" y="222" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">02 · Scope</text>
+<text x="605" y="258" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Decide the MVP and explicit exclusions</text>
+<text x="605" y="289" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Evidence: devpost/scope.md</text>
+<rect x="1095" y="180" width="440" height="145" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="1120" y="222" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">03 · PRD</text>
+<text x="1120" y="258" font-family="Noto Sans TC, sans-serif" font-size="20" font-weight="400" fill="#223b3a">Define behavior and acceptance criteria</text>
+<text x="1120" y="289" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Evidence: devpost/prd.md</text>
+<rect x="65" y="460" width="440" height="145" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="90" y="502" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">04 · Spec</text>
+<text x="90" y="538" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Choose architecture and I/O contracts</text>
+<text x="90" y="569" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Evidence: devpost/spec.md</text>
+<rect x="580" y="460" width="440" height="145" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="605" y="502" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">05 · Build</text>
+<text x="605" y="538" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Verify ordered slices; learner feedback</text>
+<text x="605" y="569" font-family="Noto Sans TC, sans-serif" font-size="20" font-weight="400" fill="#223b3a">Evidence: checklist.md + app-map.html</text>
+<rect x="1095" y="460" width="440" height="145" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="1120" y="502" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">06 · Ship</text>
+<text x="1120" y="538" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Public source + demo + submission</text>
+<text x="1120" y="569" font-family="Noto Sans TC, sans-serif" font-size="19" font-weight="400" fill="#223b3a">Evidence: ship-evidence.md + demo guide</text>
+<text x="68" y="745" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Step 6 remains in progress: final video review/link, learner submission review, eligibility, and exit survey.</text>
+</svg>

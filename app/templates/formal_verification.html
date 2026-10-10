@@ -1,48 +1,22 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import workflow_context_bar with context %}
 {% block title %}{{ tr('page.formal_verification') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
-<section class="card stack">
-  <header class="section-heading">
-    <div><p class="eyebrow">{{ tr('document.formal') }}</p><h1>{{ tr('page.formal_verification') }}</h1></div>
-    <span class="status-chip">{{ tr('status.formal') }}</span>
-  </header>
-  <aside class="readonly-banner"><strong>{{ tr('notice.formal_same_saved_bytes') }}</strong><span>{{ tr('notice.no_implied_confirmation') }}</span></aside>
-  <dl class="identity-grid">
-    <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ formal.case.id }}</code></dd></div>
-    <div><dt>{{ tr('field.candidate_id') }}</dt><dd><code>{{ formal.candidate.id }}</code></dd></div>
-    <div><dt>{{ tr('field.formalized_at') }}</dt><dd>{{ formal.round.formalized_at }}</dd></div>
-    <div><dt>{{ tr('field.json_a_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.json_a_sha256 }}</code></dd></div>
-    <div><dt>{{ tr('field.json_b_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.json_b_sha256 }}</code></dd></div>
-    <div><dt>{{ tr('field.manifest_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.manifest_sha256 }}</code></dd></div>
-    <div><dt>{{ tr('field.pdf_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.pdf_sha256 }}</code></dd></div>
-    <div><dt>{{ tr('field.svg_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.svg_sha256 }}</code></dd></div>
-  </dl>
-  <section class="data-panel stack">
-    <h2>{{ tr('page.confirmation_status') }}</h2>
-    <dl class="identity-grid">
-      {% for acknowledgement in formal.acknowledgements %}
-      <div><dt>{{ tr('field.client') if acknowledgement.actor_role == 'client' else tr('field.contractor') }} · {{ tr('status.acknowledged') }}</dt><dd>{{ acknowledgement.acknowledged_at }}</dd></div>
-      {% endfor %}
-      {% for confirmation in formal.confirmations %}
-      <div><dt>{{ tr('field.client') if confirmation.actor_role == 'client' else tr('field.contractor') }}</dt><dd>{{ tr('status.confirmed') }} · {{ confirmation.confirmed_at }}<br>{{ tr('status.formal') }} · {{ confirmation.formalized_at }}</dd></div>
-      {% endfor %}
-    </dl>
-  </section>
-  <p class="inline-actions">
-    <a class="button" href="/{{ locale }}/cases/{{ formal.case.id }}/delivery">{{ tr('action.open_delivery_review') }}</a>
-    <a class="button" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/document.pdf">{{ tr('action.open_candidate_pdf') }}</a>
-    <a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/document.pdf?download=1">{{ tr('action.download_formal') }}</a>
-    <a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/manifest.json">{{ tr('action.download_manifest') }}</a>
-    <a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg">{{ tr('action.open_candidate_svg') }}</a>
-  </p>
-  <img class="blueprint" src="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg" alt="{{ tr('document.blueprint') }}">
-  {% if case_role == 'client' %}
-  <form method="post" action="/{{ locale }}/cases/{{ formal.case.id }}/separate-proposals" class="stack">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="idempotency_key" value="{{ separate_proposal_idempotency_key }}">
-    <p>{{ tr('notice.separate_proposal_fresh_scope') }}</p>
-    <button>{{ tr('action.start_separate_proposal') }}</button>
-  </form>
-  {% endif %}
+{{ workflow_context_bar(tr('role.owner') if case_role == 'client' else tr('role.contractor'), formal.case.state, ui('confirmed', 'status'), ui('confirmed', 'task')) }}
+<header class="page-header"><div><p class="eyebrow">{{ ui('confirmed', 'eyebrow') }}</p><h1>{{ ui('confirmed', 'title') }}</h1><p>{{ ui('confirmed', 'description') }}</p></div><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ formal.case.id }}/delivery">{{ tr('action.open_delivery_review') }}</a></header>
+<aside class="readonly-banner"><strong>{{ ui('confirmed', 'banner') }}</strong><span>{{ tr('notice.no_implied_confirmation') }}</span></aside>
+
+<div class="workspace-grid">
+<section class="workspace-main panel stack">
+  <section class="data-panel stack"><div class="section-heading"><div><p class="eyebrow">Shared confirmation</p><h2>{{ tr('page.confirmation_status') }}</h2></div><span class="status-chip">{{ tr('status.confirmed') }}</span></div><dl class="identity-grid">{% for acknowledgement in formal.acknowledgements %}<div><dt>{{ tr('field.client') if acknowledgement.actor_role == 'client' else tr('field.contractor') }} · {{ tr('status.acknowledged') }}</dt><dd>{{ acknowledgement.acknowledged_at }}</dd></div>{% endfor %}{% for renewal in formal.acknowledgement_renewals %}<div><dt>{{ tr('field.client') if renewal.actor_role == 'client' else tr('field.contractor') }} · {{ tr('status.reacknowledged') if renewal.renewal_kind == 'EXPLICIT' else tr('status.legacy_acknowledgement_reuse') }}</dt><dd>{{ renewal.renewed_at }}</dd></div>{% endfor %}{% for confirmation in formal.confirmations %}<div><dt>{{ tr('field.client') if confirmation.actor_role == 'client' else tr('field.contractor') }}</dt><dd>{{ tr('status.confirmed') }} · {{ confirmation.confirmed_at }}<br>{{ tr('status.confirmation_complete') }} · {{ confirmation.formalized_at }}</dd></div>{% endfor %}</dl></section>
+  <img class="blueprint blueprint-compact" src="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg" alt="{{ tr('document.blueprint') }}">
+  {% if case_role == 'client' %}<details><summary>Start a separate proposal for new work</summary><form method="post" action="/{{ locale }}/cases/{{ formal.case.id }}/separate-proposals" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ separate_proposal_idempotency_key }}"><p>{{ tr('notice.separate_proposal_fresh_scope') }}</p><button class="button-secondary">{{ tr('action.start_separate_proposal') }}</button></form></details>{% endif %}
 </section>
+
+<aside class="workspace-aside">
+  <section class="panel compact"><p class="eyebrow">Next action</p><h2>{{ ui('confirmed', 'next_title') }}</h2><p>{{ ui('confirmed', 'next_description') }}</p></section>
+  <section class="panel compact"><h2>{{ ui('confirmed', 'files') }}</h2><p>These downloads are the fixed files bound to this confirmed version.</p><div class="inline-actions"><a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/requirement.json">{{ tr('action.download_json_a') }}</a><a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/proposal.json">{{ tr('action.download_json_b') }}</a><a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/document.pdf?download=1">{{ ui('confirmed', 'download_pdf') }}</a><a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg?download=1">Download Scope Diagram</a><a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/manifest.json">{{ tr('action.download_manifest') }}</a></div><p><a href="/{{ locale }}/cases/{{ formal.case.id }}/formal/document.pdf">{{ ui('confirmed', 'open_pdf') }}</a> · <a href="/{{ locale }}/cases/{{ formal.case.id }}/formal/diagram.svg">{{ ui('confirmed', 'open_diagram') }}</a></p></section>
+  <details class="technical-disclosure"><summary>{{ ui('confirmed', 'verify') }}</summary><dl class="summary-list"><div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ formal.case.id }}</code></dd></div><div><dt>{{ tr('field.candidate_id') }}</dt><dd><code>{{ formal.candidate.id }}</code></dd></div><div><dt>{{ tr('field.formalized_at') }}</dt><dd>{{ formal.round.formalized_at }}</dd></div><div><dt>{{ tr('field.json_a_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.json_a_sha256 }}</code></dd></div><div><dt>{{ tr('field.json_b_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.json_b_sha256 }}</code></dd></div><div><dt>{{ tr('field.manifest_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.manifest_sha256 }}</code></dd></div><div><dt>{{ tr('field.pdf_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.pdf_sha256 }}</code></dd></div><div><dt>{{ tr('field.svg_sha256') }}</dt><dd class="hash"><code>{{ formal.candidate.svg_sha256 }}</code></dd></div></dl><p><a class="button button-secondary" href="/{{ locale }}/cases/{{ formal.case.id }}/formal/manifest.json">{{ tr('action.download_manifest') }}</a></p></details>
+</aside>
+</div>
 {% endblock %}

@@ -29,7 +29,7 @@ def test_both_parties_receive_same_saved_candidate_bytes_and_writes_freeze(demo_
     owner_page = context["owner"].get(page_url)
     contractor_page = context["contractor"].get(page_url)
     assert owner_page.status_code == contractor_page.status_code == 200
-    assert b"not a formal agreement" in owner_page.data
+    assert b"ready for review but is not final yet" in owner_page.data
     for filename in ("manifest.json", "document.pdf", "diagram.svg"):
         url = f"/en/cases/{context['case_id']}/candidates/{candidate_id}/{filename}"
         owner_file = context["owner"].get(url)
@@ -170,7 +170,7 @@ def test_unsupported_document_glyph_is_rejected_before_json_a_is_fixed(demo_runt
         },
     )
     assert response.status_code == 422
-    assert b"fixed document font" in response.data
+    assert b"saved document cannot preserve" in response.data
     connection = connect_database(instance_root / "app.sqlite3")
     try:
         assert connection.execute(
@@ -199,7 +199,7 @@ def test_unsupported_document_glyph_is_rejected_before_json_b_is_fixed(demo_runt
         data={"csrf_token": csrf(context["contractor"]), "expected_revision": "1"},
     )
     assert response.status_code == 422
-    assert b"fixed document font" in response.data
+    assert b"saved document cannot preserve" in response.data
     connection = connect_database(context["instance_root"] / "app.sqlite3")
     try:
         assert connection.execute(

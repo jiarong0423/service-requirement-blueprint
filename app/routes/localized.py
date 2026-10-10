@@ -5,16 +5,22 @@ import hmac
 import os
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, Response, abort, current_app, g, redirect, render_template, request, session, url_for
 
 from app.config import MAX_JSON_BYTES, SUPPORTED_LOCALES
 from app.db import get_db, immediate_transaction
-from app.security.auth import current_user_required, verify_password
+from app.security.auth import (
+    KDF_RETRY_AFTER_SECONDS,
+    PasswordVerification,
+    current_user_required,
+    verify_password,
+)
 from app.security.csrf import new_nonce
-from app.security.permissions import load_case_party, load_owner_case, require_admin
-from app.services.artifact_store import ArtifactStoreError, read_verified
+from app.security.permissions import load_case_party, load_owner_case, require_admin, require_member
+from app.services.artifact_store import ArtifactStoreError, MAX_JSON_ARTIFACT_BYTES, read_verified
 from app.services.blueprint import blueprint_data, render_svg
 from app.services.candidate_workflow import (
     CandidateWorkflowError,
@@ -43,6 +49,7 @@ from app.services.delivery_workflow import (
 )
 from app.services.evidence_export import (
     EvidenceExportError,
+    load_delivery_dashboard_with_export_status,
     prepare_evidence_export,
     read_evidence_export,
 )
@@ -53,12 +60,14 @@ from app.services.formalization_workflow import (
     create_separate_proposal,
     load_confirmation_view,
     load_formal_version,
+    read_formal_source,
     request_candidate_revision,
     withdraw_confirmation,
 )
 from app.services.invitation_workflow import (
     InvitationWorkflowError,
     accept_invitation,
+    cancel_accepted_invitation_before_import,
     create_invitation,
     import_json_a,
     reject_invitation,
@@ -80,6 +89,10 @@ from app.services.json_b_workflow import (
 
 
 CLIENT_CATALOG_KEYS = ("error.conflict_retry", "error.required_field", "notice.local_only")
+
+
+def _quote_has_expired(value: str) -> bool:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
 
 
 def _uploaded_json_a() -> bytes:
@@ -126,7 +139,7 @@ def _empty_json_b_business_draft() -> str:
             "reinspection_required": True,
         },
         "maintenance": {"warranty_days": 0, "included_support": [], "excluded_support": []},
-        "quote_expires_at": "2099-12-31T23:59:59Z",
+        "quote_expires_at": "",
     }
     return json.dumps(draft, ensure_ascii=False, indent=2)
 
@@ -151,7 +164,10 @@ def _verify_preview_bytes(case_id: str, artifact_id: str | None, raw: bytes) -> 
         if not isinstance(document, dict):
             raise JsonContractError("schema_validation_failed")
         validate_json_a(document, Path(current_app.config["SCHEMA_PATH"]))
-        stored = read_verified(Path(current_app.config["DATA_ROOT"]), artifact["relative_path"], artifact["sha256"])
+        stored = read_verified(
+            Path(current_app.config["DATA_ROOT"]), artifact["relative_path"], artifact["sha256"],
+            artifact["byte_length"], max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
     except (JsonContractError, ArtifactStoreError, OSError, ValueError):
         abort(422, description="error.invalid_json")
     if (
@@ -259,25 +275,74 @@ def register_localized_routes(app: Flask) -> None:
 
     @localized("/login", ("GET", "POST"))
     def login(locale: str):
+        flow = request.args.get("flow", "") if request.method == "GET" else request.form.get("flow", "")
+        if flow != "start":
+            flow = ""
+        account = request.args.get("account", "") if request.method == "GET" else request.form.get("account", "")
+        account_roles = {"client", "contractor", "admin"}
+        if account not in account_roles:
+            account = ""
+        account_email = ""
         if request.method == "GET":
-            return render_template("login.html", error=None)
+            if g.user is not None:
+                endpoint = "admin_accounts" if g.user["system_role"] == "admin" else "account"
+                return redirect(url_for(f"{locale.replace('-', '_')}.{endpoint}"))
+            return render_template(
+                "login.html",
+                error=None,
+                flow=flow,
+                account=account,
+                account_email=account_email,
+            )
         email = request.form.get("email", "").strip().lower()
         candidate = request.form.get("password", "")
         user = get_db().execute("SELECT * FROM users WHERE email_normalized = ?", (email,)).fetchone()
-        valid = verify_password(user["password_hash"] if user else None, candidate)
-        if not valid or user is None or user["status"] != "active":
-            return render_template("login.html", error="error.login_invalid"), 401
+        verification = verify_password(user["password_hash"] if user else None, candidate)
+        if verification is PasswordVerification.BUSY:
+            return render_template(
+                "login.html",
+                error="error.login_unavailable",
+                flow=flow,
+                account=account,
+                account_email=account_email,
+            ), 503, {"Retry-After": str(KDF_RETRY_AFTER_SECONDS), "Cache-Control": "no-store"}
+        if verification is not PasswordVerification.VALID or user is None or user["status"] != "active":
+            return render_template(
+                "login.html",
+                error="error.login_invalid",
+                flow=flow,
+                account=account,
+                account_email=account_email,
+            ), 401
+        invitation_id = session.get("post_login_invitation_id")
         session.clear()
         session.permanent = True
         session["user_id"] = user["id"]
         session["session_version"] = user["session_version"]
         session["csrf_nonce"] = new_nonce()
-        endpoint = "admin_accounts" if user["system_role"] == "admin" else "account"
+        if user["system_role"] == "admin":
+            endpoint = "admin_accounts"
+        elif isinstance(invitation_id, str) and invitation_id:
+            return redirect(
+                url_for(
+                    f"{locale.replace('-', '_')}.invitation_review",
+                    invitation_id=invitation_id,
+                )
+            )
+        elif flow == "start":
+            endpoint = "owner_guide"
+        else:
+            endpoint = "account"
         return redirect(url_for(f"{locale.replace('-', '_')}.{endpoint}"))
 
     @localized("/logout", ("POST",))
     @current_user_required
     def logout(locale: str):
+        with immediate_transaction(get_db()):
+            get_db().execute(
+                "UPDATE users SET session_version = session_version + 1, updated_at = ? WHERE id = ?",
+                (utc_now(), g.user["id"]),
+            )
         session.clear()
         session["csrf_nonce"] = new_nonce()
         return redirect(url_for(f"{locale.replace('-', '_')}.start"))
@@ -289,10 +354,20 @@ def register_localized_routes(app: Flask) -> None:
         pending_invitations = []
         contractor_cases = []
         if g.user["system_role"] != "admin":
-            owner_cases = get_db().execute(
-                "SELECT id, title, state, content_revision FROM cases WHERE owner_id = ? ORDER BY created_at",
+            owner_rows = get_db().execute(
+                "SELECT c.id, c.title, COALESCE(w.state, c.state) AS state, c.content_revision, "
+                "d.completed_sections_json "
+                "FROM cases AS c LEFT JOIN delivery_workflows AS w ON w.case_id = c.id "
+                "LEFT JOIN requirement_drafts AS d ON d.case_id = c.id "
+                "WHERE c.owner_id = ? ORDER BY c.created_at",
                 (g.user["id"],),
             ).fetchall()
+            owner_cases = []
+            for row in owner_rows:
+                owner_case = dict(row)
+                completed = set(json.loads(owner_case["completed_sections_json"] or "[]"))
+                owner_case["resume_section"] = next((step for step in range(1, 9) if step not in completed), None)
+                owner_cases.append(owner_case)
             pending_invitations = get_db().execute(
                 "SELECT i.id, i.state, i.expires_at, c.title "
                 "FROM invitations AS i JOIN cases AS c ON c.id = i.case_id "
@@ -301,7 +376,9 @@ def register_localized_routes(app: Flask) -> None:
                 (g.user["id"], utc_now()),
             ).fetchall()
             contractor_cases = get_db().execute(
-                "SELECT id, title, state, content_revision FROM cases WHERE contractor_id = ? ORDER BY created_at",
+                "SELECT c.id, c.title, COALESCE(w.state, c.state) AS state, c.content_revision "
+                "FROM cases AS c LEFT JOIN delivery_workflows AS w ON w.case_id = c.id "
+                "WHERE c.contractor_id = ? ORDER BY c.created_at",
                 (g.user["id"],),
             ).fetchall()
         return render_template(
@@ -312,15 +389,15 @@ def register_localized_routes(app: Flask) -> None:
         )
 
     @localized("/owner/guide")
-    @current_user_required
+    @require_member
     def owner_guide(locale: str):
         return render_template("owner_guide.html")
 
     @localized("/owner/requirements", ("POST",))
-    @current_user_required
+    @require_member
     def new_requirement(locale: str):
         title = request.form.get("title", "").strip()
-        if not title or len(title) > 200 or g.user["system_role"] == "admin":
+        if not title or len(title) > 200:
             abort(400, description="error.required_field")
         case_id = create_case(get_db(), g.user["id"], title)
         return redirect(url_for(f"{locale.replace('-', '_')}.requirement_section", case_id=case_id, section_no=1))
@@ -332,6 +409,17 @@ def register_localized_routes(app: Flask) -> None:
             abort(404)
         case = load_owner_case(case_id)
         draft, completed = load_draft(get_db(), case_id)
+        if request.method == "GET" and case["state"] != "REQUIREMENT_DRAFT":
+            if case["state"] in ("INVITATION_PENDING", "WAITING_JSON_A_IMPORT"):
+                destination = "publish_invitation"
+            elif case["state"] == "FORMAL":
+                delivery = get_db().execute(
+                    "SELECT state FROM delivery_workflows WHERE case_id = ?", (case_id,)
+                ).fetchone()
+                destination = "delivery_dashboard" if delivery and delivery["state"] != "FORMAL" else "formal_verification"
+            else:
+                destination = "case_room"
+            return redirect(url_for(f"{locale.replace('-', '_')}.{destination}", case_id=case_id))
         if request.method == "POST":
             try:
                 expected_revision = int(request.form.get("expected_revision", ""))
@@ -344,7 +432,17 @@ def register_localized_routes(app: Flask) -> None:
             if section_no == 8:
                 return redirect(url_for(f"{locale.replace('-', '_')}.requirement_review", case_id=case_id))
             return redirect(url_for(f"{locale.replace('-', '_')}.requirement_section", case_id=case_id, section_no=section_no + 1))
-        return render_template("requirement_section.html", case=case, section_no=section_no, values=draft.get(tuple(("project", "users_and_scenarios", "pages_and_content", "features", "data_and_permissions", "external_services_and_assets", "visual_preferences", "delivery_and_constraints"))[section_no - 1], {}), completed=completed)
+        values = draft.get(tuple(("project", "users_and_scenarios", "pages_and_content", "features", "data_and_permissions", "external_services_and_assets", "visual_preferences", "delivery_and_constraints"))[section_no - 1], {})
+        return render_template(
+            "requirement_section.html",
+            case=case,
+            section_no=section_no,
+            values=values,
+            completed=completed,
+            feature_items={item["feature_code"]: item for item in values.get("items", [])},
+            service_items={item["service_code"]: item for item in values.get("services", [])},
+            asset_items={item["asset_code"]: item for item in values.get("assets", [])},
+        )
 
     @localized("/owner/requirements/<case_id>/review")
     @current_user_required
@@ -355,7 +453,8 @@ def register_localized_routes(app: Flask) -> None:
         artifact = None
         if case["current_json_a_artifact_id"]:
             artifact = get_db().execute("SELECT id, version_no, sha256, byte_length FROM artifacts WHERE id = ?", (case["current_json_a_artifact_id"],)).fetchone()
-        return render_template("review.html", case=case, draft=draft, completed=completed, blueprint=blueprint, artifact=artifact)
+        next_section = next((step for step in range(1, 9) if step not in completed), None)
+        return render_template("review.html", case=case, draft=draft, completed=completed, blueprint=blueprint, artifact=artifact, next_section=next_section)
 
     @localized("/owner/requirements/<case_id>/blueprint.svg")
     @current_user_required
@@ -396,13 +495,16 @@ def register_localized_routes(app: Flask) -> None:
     def download_json_a(locale: str, case_id: str, artifact_id: str):
         load_owner_case(case_id)
         artifact = get_db().execute(
-            "SELECT relative_path, sha256 FROM artifacts WHERE id = ? AND case_id = ? AND kind = 'json_a' AND lifecycle IN ('active','superseded')",
+            "SELECT relative_path, sha256, byte_length FROM artifacts WHERE id = ? AND case_id = ? AND kind = 'json_a' AND lifecycle IN ('active','superseded','formal')",
             (artifact_id, case_id),
         ).fetchone()
         if artifact is None:
             abort(404)
         try:
-            raw = read_verified(Path(current_app.config["DATA_ROOT"]), artifact["relative_path"], artifact["sha256"])
+            raw = read_verified(
+                Path(current_app.config["DATA_ROOT"]), artifact["relative_path"], artifact["sha256"],
+                artifact["byte_length"], max_bytes=MAX_JSON_ARTIFACT_BYTES,
+            )
         except (OSError, ArtifactStoreError):
             abort(409, description="error.digest_mismatch")
         response = Response(raw, mimetype="application/json")
@@ -415,6 +517,7 @@ def register_localized_routes(app: Flask) -> None:
         artifact = _active_json_a(case_id, case["current_json_a_artifact_id"])
         invitation = get_db().execute(
             "SELECT i.id, i.state, i.expires_at, i.source_version_no AS json_a_version_no, "
+            "i.source_invalidated_at, i.source_invalidation_reason, "
             "u.display_name AS invited_display_name, u.email_normalized AS invited_email_normalized "
             "FROM invitations AS i JOIN users AS u ON u.id = i.designated_user_id "
             "WHERE i.case_id = ? ORDER BY i.created_at DESC LIMIT 1",
@@ -542,17 +645,41 @@ def register_localized_routes(app: Flask) -> None:
             abort(404)
         return redirect(url_for(f"{locale.replace('-', '_')}.publish_invitation", case_id=case_id))
 
+    @localized("/owner/requirements/<case_id>/invitations/<invitation_id>/cancel-before-import", ("POST",))
+    @current_user_required
+    def cancel_case_invitation_before_import(locale: str, case_id: str, invitation_id: str):
+        case = load_owner_case(case_id, allowed_states=("WAITING_JSON_A_IMPORT",))
+        if request.form.get("expected_revision") != str(case["content_revision"]):
+            abort(409, description="error.conflict_retry")
+        try:
+            cancel_accepted_invitation_before_import(get_db(), case_id, invitation_id, g.user["id"])
+        except InvitationWorkflowError:
+            abort(404)
+        return redirect(url_for(f"{locale.replace('-', '_')}.publish_invitation", case_id=case_id))
+
     def designated_invitation(invitation_id: str):
         if g.user["system_role"] == "admin":
             abort(404)
         invitation = get_db().execute(
             "SELECT i.id, i.case_id, i.state, i.expires_at, i.source_version_no AS json_a_version_no, "
             "i.source_sha256 AS json_a_sha256, i.source_content_revision AS case_revision, "
-            "c.title AS case_title, owner.display_name AS client_display_name "
+            "i.source_invalidated_at, "
+            "CASE WHEN (i.state = 'pending' AND i.source_invalidated_at IS NULL "
+            "AND i.expires_at > ?) OR (i.state = 'accepted' "
+            "AND i.source_invalidated_at IS NULL "
+            "AND c.contractor_id = i.designated_user_id) "
+            "THEN c.title END AS case_title, "
+            "CASE WHEN i.state = 'accepted' AND i.source_invalidated_at IS NULL "
+            "AND c.contractor_id = i.designated_user_id THEN c.state END AS case_state, "
+            "CASE WHEN i.state = 'accepted' AND i.source_invalidated_at IS NULL "
+            "AND c.contractor_id = i.designated_user_id "
+            "THEN COALESCE(w.state, c.state) END AS workflow_state, "
+            "owner.display_name AS client_display_name "
             "FROM invitations AS i JOIN cases AS c ON c.id = i.case_id "
+            "LEFT JOIN delivery_workflows AS w ON w.case_id = c.id "
             "JOIN users AS owner ON owner.id = i.owner_id "
             "WHERE i.id = ? AND i.designated_user_id = ?",
-            (invitation_id, g.user["id"]),
+            (utc_now(), invitation_id, g.user["id"]),
         ).fetchone()
         if invitation is None:
             abort(404)
@@ -562,8 +689,10 @@ def register_localized_routes(app: Flask) -> None:
         return invitation
 
     @localized("/invitations/<invitation_id>")
-    @current_user_required
     def invitation_review(locale: str, invitation_id: str):
+        if g.user is None:
+            session["post_login_invitation_id"] = invitation_id
+            return redirect(url_for(f"{locale.replace('-', '_')}.login"))
         invitation = designated_invitation(invitation_id)
         return render_template("invitation_review.html", invitation=invitation)
 
@@ -659,7 +788,10 @@ def register_localized_routes(app: Flask) -> None:
         if row is None:
             abort(404)
         try:
-            raw = read_verified(Path(current_app.config["DATA_ROOT"]), row["relative_path"], row["sha256"])
+            raw = read_verified(
+                Path(current_app.config["DATA_ROOT"]), row["relative_path"], row["sha256"],
+                row["byte_length"], max_bytes=MAX_JSON_ARTIFACT_BYTES,
+            )
             document = decode_strict_json(raw)
             if not isinstance(document, dict):
                 raise JsonContractError("schema_validation_failed")
@@ -674,6 +806,31 @@ def register_localized_routes(app: Flask) -> None:
         case, role, source, document = active_case_document(case_id)
         project = document.get("project", {})
         collaboration = list_collaboration(get_db(), case_id, g.user["id"])
+
+        def issue_is_actionable_for_role(issue) -> bool:
+            if issue["kind"] == "JSON_B_OBJECTION":
+                if issue["state"] in ("OPEN", "REVISION_REQUESTED"):
+                    return role == "contractor"
+                if issue["state"] in ("PROPOSED", "OUT_OF_SCOPE_PROPOSED"):
+                    return role == "client"
+                return False
+            return (
+                issue["state"] in ("OPEN", "REVISION_REQUESTED")
+                or (
+                    issue["state"] in ("PROPOSED", "OUT_OF_SCOPE_PROPOSED")
+                    and issue["proposal_role"] != role
+                )
+            )
+
+        primary_issue = next(
+            (
+                issue
+                for issue in collaboration["issues"]
+                if case["state"] not in ("JSON_B_PRIVATE_DRAFT", "CANDIDATE_REVIEW", "FORMAL")
+                and issue_is_actionable_for_role(issue)
+            ),
+            None,
+        )
         current_review = None
         if case["current_json_b_artifact_id"] is not None:
             current_review = get_db().execute(
@@ -727,6 +884,7 @@ def register_localized_routes(app: Flask) -> None:
             messages=collaboration["messages"],
             issues=collaboration["issues"],
             issue_events=collaboration["issue_events"],
+            primary_issue=primary_issue,
             current_review=current_review,
             current_candidate=current_candidate,
             formal_candidate=formal_candidate,
@@ -741,7 +899,10 @@ def register_localized_routes(app: Flask) -> None:
     def case_json_a_download(locale: str, case_id: str):
         _case, _role, source, _document = active_case_document(case_id)
         try:
-            raw = read_verified(Path(current_app.config["DATA_ROOT"]), source["relative_path"], source["sha256"])
+            raw = read_verified(
+                Path(current_app.config["DATA_ROOT"]), source["relative_path"], source["sha256"],
+                source["byte_length"], max_bytes=MAX_JSON_ARTIFACT_BYTES,
+            )
         except (ArtifactStoreError, OSError, ValueError):
             abort(409, description="error.digest_mismatch")
         response = Response(raw, mimetype="application/json")
@@ -844,11 +1005,13 @@ def register_localized_routes(app: Flask) -> None:
             except (ValueError, UnicodeEncodeError):
                 abort(422, description="error.invalid_json")
             return redirect(url_for(f"{locale.replace('-', '_')}.json_b_draft", case_id=case_id))
+        draft_text = draft["data_json"] if draft is not None else _empty_json_b_business_draft()
         return render_template(
             "json_b_draft.html",
             case_id=case_id,
             draft=draft,
-            draft_text=draft["data_json"] if draft is not None else _empty_json_b_business_draft(),
+            draft_text=draft_text,
+            draft_business=json.loads(draft_text),
             business_fields=BUSINESS_FIELDS,
         )
 
@@ -868,7 +1031,11 @@ def register_localized_routes(app: Flask) -> None:
             )
         except DocumentIntegrityError:
             abort(422, description="error.unsupported_character")
-        except (ValueError, JsonBWorkflowError):
+        except JsonBWorkflowError as error:
+            if error.code in {"quote_expiry_invalid", "quote_expired"}:
+                abort(409, description="error.quote_expired")
+            abort(409, description="error.conflict_retry")
+        except ValueError:
             abort(409, description="error.conflict_retry")
         return redirect(
             url_for(
@@ -887,6 +1054,8 @@ def register_localized_routes(app: Flask) -> None:
                 Path(current_app.config["DATA_ROOT"]),
                 artifact["relative_path"],
                 artifact["sha256"],
+                artifact["byte_length"],
+                max_bytes=MAX_JSON_ARTIFACT_BYTES,
             )
         except (JsonBWorkflowError, ArtifactStoreError, OSError, ValueError):
             abort(404)
@@ -913,7 +1082,9 @@ def register_localized_routes(app: Flask) -> None:
             except JsonBWorkflowError as error:
                 if error.code in {"case_unavailable", "export_unavailable"}:
                     abort(404)
-                status = 409 if error.code in {"draft_conflict", "source_mismatch", "quote_expired"} else 422
+                if error.code == "quote_expired":
+                    abort(409, description="error.quote_expired")
+                status = 409 if error.code in {"draft_conflict", "source_mismatch"} else 422
                 abort(status, description="error.invalid_json")
             return redirect(
                 url_for(
@@ -938,14 +1109,21 @@ def register_localized_routes(app: Flask) -> None:
             abort(404)
         case, role = load_case_party(
             case_id,
-            allowed_states=("JSON_B_PRIVATE_DRAFT", "JSON_B_REVIEW", "CANDIDATE_REVIEW"),
+            allowed_states=("JSON_B_PRIVATE_DRAFT", "JSON_B_REVIEW", "CANDIDATE_REVIEW", "FORMAL"),
         )
+        has_blocking_issues = get_db().execute(
+            "SELECT 1 FROM case_issues WHERE case_id = ? "
+            "AND state NOT IN ('RESOLVED', 'OUT_OF_SCOPE') LIMIT 1",
+            (case_id,),
+        ).fetchone() is not None
         return render_template(
             "json_b_review.html",
             case=case,
             case_role=role,
             review=row,
             document=document,
+            has_blocking_issues=has_blocking_issues,
+            quote_expired=_quote_has_expired(row["quote_expires_at"]),
             review_fields=[
                 {
                     "key": key,
@@ -981,7 +1159,9 @@ def register_localized_routes(app: Flask) -> None:
         except CandidateWorkflowError as error:
             if error.code in {"case_unavailable", "candidate_unavailable"}:
                 abort(404)
-            status = 422 if error.code in {"blocking_issue", "quote_expired", "source_mismatch"} else 409
+            if error.code == "quote_expired":
+                abort(409, description="error.quote_expired")
+            status = 422 if error.code in {"blocking_issue", "source_mismatch"} else 409
             abort(status, description="error.candidate_build_failed")
         return redirect(
             url_for(
@@ -1006,6 +1186,10 @@ def register_localized_routes(app: Flask) -> None:
         except (CandidateWorkflowError, FormalizationWorkflowError):
             abort(404)
         acknowledgement_by_role = {row["actor_role"]: row for row in view["acknowledgements"]}
+        renewal_by_withdrawal = {
+            row["withdrawn_confirmation_id"]: row
+            for row in view["acknowledgement_renewals"]
+        }
         confirmation_by_role: dict[str, sqlite3.Row] = {}
         confirmation_priority = {
             "WITHDRAWN": 1,
@@ -1015,21 +1199,34 @@ def register_localized_routes(app: Flask) -> None:
         }
         for row in view["confirmations"]:
             existing = confirmation_by_role.get(row["actor_role"])
-            if existing is None or confirmation_priority[row["state"]] > confirmation_priority[existing["state"]]:
+            if existing is None or confirmation_priority[row["state"]] >= confirmation_priority[existing["state"]]:
                 confirmation_by_role[row["actor_role"]] = row
+        renewal_required_by_role = {
+            row["actor_role"]: row for row in view["unrenewed_confirmations"]
+        }
+        confirmation_by_role.update(renewal_required_by_role)
         own_acknowledgement = acknowledgement_by_role.get(case_role)
         own_confirmation = confirmation_by_role.get(case_role)
+        proposal = get_db().execute(
+            "SELECT quote_expires_at FROM json_b_versions WHERE artifact_id = ? AND case_id = ?",
+            (view["candidate"]["json_b_artifact_id"], case_id),
+        ).fetchone()
+        if proposal is None:
+            abort(404)
         return render_template(
             "candidate_review.html",
             candidate=view["candidate"],
             review_round=view["round"],
             acknowledgement_by_role=acknowledgement_by_role,
             confirmation_by_role=confirmation_by_role,
+            renewal_by_withdrawal=renewal_by_withdrawal,
+            renewal_required_by_role=renewal_required_by_role,
             own_acknowledgement=own_acknowledgement,
             own_confirmation=own_confirmation,
             case=case,
             case_id=case_id,
             case_role=case_role,
+            quote_expired=_quote_has_expired(proposal["quote_expires_at"]),
         )
 
     def _formalization_error(error: FormalizationWorkflowError) -> None:
@@ -1039,6 +1236,8 @@ def register_localized_routes(app: Flask) -> None:
             abort(422, description=f"error.{error.code}")
         if error.code == "quote_expired":
             abort(409, description="error.quote_expired")
+        if error.code == "blocking_issue":
+            abort(422, description="error.blocking_issue")
         abort(409, description="error.confirmation_stale")
 
     @localized("/cases/<case_id>/candidates/<candidate_id>/acknowledgements", ("POST",))
@@ -1182,16 +1381,30 @@ def register_localized_routes(app: Flask) -> None:
     def _delivery_error(error: DeliveryWorkflowError | EvidenceExportError) -> None:
         if error.code in {"case_unavailable", "delivery_unavailable", "dispute_unavailable", "export_unavailable"}:
             abort(404)
+        if error.code == "export_superseded":
+            abort(409, description="error.export_superseded")
         if error.code in {"workflow_stale", "delivery_state_invalid", "export_state_invalid", "position_exists", "idempotency_conflict", "delivery_version_limit"}:
             abort(409, description="error.conflict_retry")
-        if error.code in {"delivery_integrity_invalid", "export_integrity_invalid", "formal_integrity_invalid"}:
+        if error.code in {"acceptance_integrity_invalid", "delivery_integrity_invalid", "export_integrity_invalid", "formal_integrity_invalid"}:
             abort(409, description="error.digest_mismatch")
+        if error.code == "export_source_changed":
+            abort(409, description="error.export_source_changed")
         abort(422, description="error.required_field")
 
     @localized("/cases/<case_id>/delivery")
     @current_user_required
     def delivery_dashboard(locale: str, case_id: str):
-        view = _delivery_view_or_404(case_id)
+        try:
+            view = load_delivery_dashboard_with_export_status(
+                get_db(),
+                Path(current_app.config["DATA_ROOT"]),
+                current_app.config["DOCUMENT_ASSETS"],
+                case_id,
+                g.user["id"],
+                Path(current_app.config["EVIDENCE_EXPORT_SCHEMA_PATH"]),
+            )
+        except (DeliveryWorkflowError, EvidenceExportError) as error:
+            _delivery_error(error)
         return render_template(
             "delivery_dashboard.html",
             view=view,
@@ -1310,10 +1523,19 @@ def register_localized_routes(app: Flask) -> None:
     @current_user_required
     def evidence_export_prepare(locale: str, case_id: str):
         try:
-            prepare_evidence_export(
+            result = prepare_evidence_export(
                 get_db(), Path(current_app.config["DATA_ROOT"]), current_app.config["DOCUMENT_ASSETS"],
                 case_id, g.user["id"], Path(current_app.config["EVIDENCE_EXPORT_SCHEMA_PATH"]),
             )
+            if request.args.get("download") == "1":
+                row, raw = read_evidence_export(
+                    get_db(), Path(current_app.config["DATA_ROOT"]), current_app.config["DOCUMENT_ASSETS"],
+                    case_id, result.export_id, g.user["id"], Path(current_app.config["EVIDENCE_EXPORT_SCHEMA_PATH"]),
+                )
+                response = Response(raw, mimetype="application/zip")
+                response.headers["Content-Disposition"] = f'attachment; filename="evidence-{row["version_no"]}.zip"'
+                response.headers["Cache-Control"] = "no-store, private"
+                return response
         except EvidenceExportError as error:
             _delivery_error(error)
         return redirect(url_for(f"{locale.replace('-', '_')}.delivery_dashboard", case_id=case_id))
@@ -1367,6 +1589,33 @@ def register_localized_routes(app: Flask) -> None:
     @current_user_required
     def formal_svg(locale: str, case_id: str):
         return formal_component_response(case_id, "diagram.svg")
+
+    def formal_source_response(case_id: str, source_kind: str, download_name: str):
+        try:
+            _artifact, raw = read_formal_source(
+                get_db(),
+                Path(current_app.config["DATA_ROOT"]),
+                current_app.config["DOCUMENT_ASSETS"],
+                case_id,
+                g.user["id"],
+                source_kind,
+            )
+        except (CandidateWorkflowError, FormalizationWorkflowError):
+            abort(404)
+        response = Response(raw, mimetype="application/json")
+        response.headers["Content-Disposition"] = f'attachment; filename="{download_name}"'
+        response.headers["Cache-Control"] = "no-store, private"
+        return response
+
+    @localized("/cases/<case_id>/formal/requirement.json")
+    @current_user_required
+    def formal_json_a(locale: str, case_id: str):
+        return formal_source_response(case_id, "json_a", "requirement-json-a.json")
+
+    @localized("/cases/<case_id>/formal/proposal.json")
+    @current_user_required
+    def formal_json_b(locale: str, case_id: str):
+        return formal_source_response(case_id, "json_b", "proposal-json-b.json")
 
     @localized("/cases/<case_id>/separate-proposals", ("POST",))
     @current_user_required

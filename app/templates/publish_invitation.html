@@ -1,8 +1,11 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import workflow_context_bar with context %}
 {% set invitation_state = invitation.state|upper if invitation else '' %}
+{% set invitation_closed = invitation and invitation.source_invalidated_at %}
+{% set case_started = invitation_state == 'ACCEPTED' and case.state not in ('INVITATION_PENDING', 'WAITING_JSON_A_IMPORT') %}
 {% block title %}{{ tr('page.publish_invitation') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
-<div class="progress">{{ tr('case.private') }} · {{ tr('status.owner_private_draft') }}</div>
+{{ workflow_context_bar(tr('role.owner'), case.state, 'Invitation Closed' if invitation_closed else (ui_invitation_state(invitation_state) if invitation else ui('invitation', 'status_ready')), ui('invitation', 'task_invite') if preview else (ui('invitation', 'task_verify') if invitation_closed else (ui('invitation', 'task_open_case') if case_started else (ui_invitation_task(invitation_state, 'client') if invitation else ui('invitation', 'task_verify'))))) }}
 <section class="card stack">
   <header>
     <p class="eyebrow">{{ tr('page.publish_invitation') }}</p>
@@ -10,12 +13,12 @@
     <p>{{ tr('notice.invitation_private') }}</p>
   </header>
 
-  <dl class="identity-grid">
+  <details class="technical-disclosure"><summary>Verify this requirement version</summary><dl class="identity-grid">
     <div><dt>{{ tr('field.case_id') }}</dt><dd><code>{{ case.id }}</code></dd></div>
     <div><dt>{{ tr('field.json_a_version') }}</dt><dd>{{ artifact.version_no }}</dd></div>
     <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ artifact.sha256 }}</code></dd></div>
     <div><dt>{{ tr('field.byte_length') }}</dt><dd>{{ artifact.byte_length }}</dd></div>
-  </dl>
+  </dl></details>
 
   {% if invitation %}
   <section class="data-panel stack" aria-labelledby="invitation-status-heading">
@@ -23,28 +26,17 @@
       <div>
         <p class="eyebrow">{{ tr('field.invitation_status') }}</p>
         <h2 id="invitation-status-heading">
-          {% if invitation_state == 'PENDING' %}{{ tr('status.invitation_pending') }}
-          {% elif invitation_state == 'ACCEPTED' %}{{ tr('status.invitation_accepted') }}
-          {% elif invitation_state == 'REJECTED' %}{{ tr('status.invitation_rejected') }}
-          {% elif invitation_state == 'REVOKED' %}{{ tr('status.invitation_revoked') }}
-          {% elif invitation_state == 'EXPIRED' %}{{ tr('status.invitation_expired') }}
-          {% else %}{{ tr('error.invitation_invalid') }}{% endif %}
+          {{ 'Invitation Closed' if invitation_closed else ui_invitation_state(invitation_state) }}
         </h2>
       </div>
       <span class="status-chip">
-        {% if invitation_state == 'PENDING' %}{{ tr('status.invitation_pending') }}
-        {% elif invitation_state == 'ACCEPTED' %}{{ tr('status.invitation_accepted') }}
-        {% elif invitation_state == 'REJECTED' %}{{ tr('status.invitation_rejected') }}
-        {% elif invitation_state == 'REVOKED' %}{{ tr('status.invitation_revoked') }}
-        {% elif invitation_state == 'EXPIRED' %}{{ tr('status.invitation_expired') }}
-        {% else %}{{ tr('error.invitation_invalid') }}{% endif %}
+        {{ 'Invitation Closed' if invitation_closed else ui_invitation_state(invitation_state) }}
       </span>
     </div>
     <dl class="identity-grid">
       <div><dt>{{ tr('field.contractor') }}</dt><dd data-user-content>{{ invitation.invited_display_name }}</dd></div>
       <div><dt>{{ tr('field.email') }}</dt><dd>{{ invitation.invited_email_normalized }}</dd></div>
       <div><dt>{{ tr('field.invitation_expiry') }}</dt><dd>{{ invitation.expires_at }}</dd></div>
-      <div><dt>{{ tr('field.json_a_version') }}</dt><dd>{{ invitation.json_a_version_no }}</dd></div>
     </dl>
 
     {% if invitation_url and invitation_code %}
@@ -60,7 +52,18 @@
     </aside>
     {% endif %}
 
-    {% if invitation_state == 'PENDING' %}
+    {% if invitation_closed %}
+    <p class="notice">This invitation was closed before the contractor imported the saved requirement. You can issue a new invitation.</p>
+    {% elif case_started %}
+    <p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}">{{ tr('action.open_private_case') }}</a></p>
+    {% elif invitation_state == 'ACCEPTED' and case.state == 'WAITING_JSON_A_IMPORT' %}
+    <form method="post" action="/{{ locale }}/owner/requirements/{{ case.id }}/invitations/{{ invitation.id }}/cancel-before-import">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
+      <p class="muted">The contractor has accepted but has not imported the saved requirement yet. Closing this invitation will let you invite someone again.</p>
+      <button class="button-danger" type="submit">Close Invitation Before Import</button>
+    </form>
+    {% elif invitation_state == 'PENDING' %}
     <form method="post" action="/{{ locale }}/owner/requirements/{{ case.id }}/invitations/{{ invitation.id }}/revoke">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
@@ -97,10 +100,10 @@
       </label>
       <p class="muted">{{ tr('help.contractor_existing_account') }}</p>
       <p class="notice">{{ tr('notice.invitation_seven_days') }}</p>
-      <button type="submit">{{ tr('action.create_invitation') }}</button>
+      <button type="submit" data-ui="primary-action">{{ tr('action.create_invitation') }}</button>
     </form>
   </section>
-  {% elif not invitation or invitation_state in ('REJECTED', 'REVOKED', 'EXPIRED') %}
+  {% elif not invitation or invitation_closed or invitation_state in ('REJECTED', 'REVOKED', 'EXPIRED') %}
   <form class="stack" method="post" action="/{{ locale }}/owner/requirements/{{ case.id }}/publish/preview" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected_revision" value="{{ case.content_revision }}">
@@ -109,7 +112,7 @@
       <input class="file-input" type="file" name="json_a_file" accept="application/json,.json" required>
     </label>
     <p class="muted">{{ tr('help.upload_exact_registered_json_a') }}</p>
-    <button type="submit">{{ tr('action.preview_json_a') }}</button>
+    <button type="submit" data-ui="primary-action">{{ tr('action.preview_json_a') }}</button>
   </form>
   {% endif %}
 </section>

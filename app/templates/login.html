@@ -1,10 +1,17 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import context_bar with context %}
 {% block title %}{{ tr('page.login') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
-<section class="card narrow"><h1>{{ tr('page.login') }}</h1>
+{{ context_bar('Visitor', 'Access', 'Signed out', 'Sign in to the selected workspace', none) }}
+<section class="card narrow login-card">
+{% if account == 'client' %}<p class="eyebrow">Client</p><h1>Sign in to start or continue a requirement</h1><p>Create private client work and invite one contractor when the requirement is ready.</p>
+{% elif account == 'contractor' %}<p class="eyebrow">Invited contractor</p><h1>Sign in to assigned work</h1><p>An invitation is required. Choosing this entry does not grant access to a case.</p>
+{% elif account == 'admin' %}<p class="eyebrow">Administrator</p><h1>Sign in to administration</h1><p>Account and service operations only. Administrators cannot read private case content.</p>
+{% else %}<p class="eyebrow">Private workspace</p><h1>Sign in to your workspace</h1><p>One account opens the client work you created, contractor invitations assigned to you, and every case that needs your attention.</p>{% endif %}
 {% if error %}<p class="error">{{ tr(error) }}</p>{% endif %}
-<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<label>{{ tr('field.email') }}<input name="email" type="email" required autocomplete="username"></label>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="flow" value="{{ flow }}"><input type="hidden" name="account" value="{{ account }}">
+<label>{{ tr('field.email') }}<input name="email" type="email" value="{{ account_email }}" required autocomplete="username"></label>
 <label>{{ tr('field.password') }}<input name="password" type="password" required autocomplete="current-password"></label>
-<button>{{ tr('action.sign_in') }}</button></form></section>
+<button>{{ tr('action.sign_in') }}</button></form>
+<p class="login-return"><a href="/{{ locale }}/">← Back to overview</a></p></section>
 {% endblock %}

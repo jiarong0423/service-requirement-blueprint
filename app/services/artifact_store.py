@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import ctypes
 import errno
 import os
 import shutil
+import stat
 import sys
 import uuid
 from collections.abc import Mapping
@@ -16,6 +18,14 @@ class ArtifactStoreError(RuntimeError):
 
 
 CANDIDATE_FILENAMES = ("manifest.json", "document.pdf", "diagram.svg")
+MAX_JSON_ARTIFACT_BYTES = 1_048_576
+MAX_CANDIDATE_MANIFEST_BYTES = 1_048_576
+MAX_CANDIDATE_BINARY_BYTES = 67_108_864
+MAX_DELIVERY_ARTIFACT_BYTES = 1_048_576
+MAX_EVIDENCE_EXPORT_BYTES = 67_108_864
+_READ_CHUNK_BYTES = 65_536
+_OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+_LISTDIR_SUPPORTS_FD = os.listdir in os.supports_fd
 
 
 def _within(path: Path, root: Path) -> Path:
@@ -68,19 +78,165 @@ def remove_new_artifact(data_root: Path, relative_path: str) -> None:
     shutil.rmtree(target.parent, ignore_errors=True)
 
 
-def read_verified(data_root: Path, relative_path: str, expected_digest: str) -> bytes:
-    current = data_root.resolve()
-    for part in Path(relative_path).parts:
-        current = current / part
-        if current.is_symlink():
-            raise ArtifactStoreError("symlink_rejected")
-    target = _within(data_root / relative_path, data_root)
-    if not target.is_file() or target.is_symlink():
-        raise ArtifactStoreError("artifact_file_invalid")
-    raw = target.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != expected_digest:
-        raise ArtifactStoreError("digest_mismatch")
-    return raw
+def quarantine_json_artifact(
+    data_root: Path,
+    case_id: str,
+    artifact_id: str,
+) -> str:
+    try:
+        if str(uuid.UUID(case_id)) != case_id or str(uuid.UUID(artifact_id)) != artifact_id:
+            raise ValueError
+    except ValueError as error:
+        raise ArtifactStoreError("identifier_invalid") from error
+    root = data_root.resolve()
+    source = _within(root / "cases" / case_id / "artifacts" / artifact_id, root)
+    if not source.is_dir() or source.is_symlink():
+        raise ArtifactStoreError("orphan_directory_invalid")
+    quarantine_root = _within(root / "cases" / case_id / "quarantine", root)
+    _ensure_private_directory(quarantine_root)
+    target = _within(quarantine_root / f"artifacts-{artifact_id}-{uuid.uuid4()}", root)
+    _rename_directory_no_replace(source, target)
+    _fsync_directory(source.parent)
+    _fsync_directory(quarantine_root)
+    return target.relative_to(root).as_posix()
+
+
+def _descriptor_read_flags(*, directory: bool) -> int:
+    required = ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK")
+    if directory:
+        required += ("O_DIRECTORY",)
+    if any(not hasattr(os, name) for name in required) or not _OPEN_SUPPORTS_DIR_FD:
+        raise ArtifactStoreError("descriptor_safe_read_unavailable")
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    if directory:
+        flags |= os.O_DIRECTORY
+    else:
+        flags |= os.O_NONBLOCK
+    return flags
+
+
+def _relative_parts(relative_path: str, *, allow_directory: bool = False) -> tuple[str, ...]:
+    if not isinstance(relative_path, str) or not relative_path:
+        raise ArtifactStoreError("artifact_path_invalid")
+    path = Path(relative_path)
+    parts = path.parts
+    if (
+        path.is_absolute()
+        or not parts
+        or any(part in {"", ".", ".."} for part in parts)
+        or (not allow_directory and len(parts) < 2)
+    ):
+        raise ArtifactStoreError("artifact_path_invalid")
+    return parts
+
+
+def _open_directory_descriptor(data_root: Path, relative_directory: str = "") -> int:
+    flags = _descriptor_read_flags(directory=True)
+    try:
+        current = os.open(data_root, flags)
+    except OSError as error:
+        raise ArtifactStoreError("artifact_root_invalid") from error
+    try:
+        root_stat = os.fstat(current)
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise ArtifactStoreError("artifact_root_invalid")
+        if not relative_directory:
+            return current
+        for part in _relative_parts(relative_directory, allow_directory=True):
+            try:
+                child = os.open(part, flags, dir_fd=current)
+            except OSError as error:
+                raise ArtifactStoreError("artifact_directory_invalid") from error
+            child_stat = os.fstat(child)
+            if not stat.S_ISDIR(child_stat.st_mode):
+                os.close(child)
+                raise ArtifactStoreError("artifact_directory_invalid")
+            os.close(current)
+            current = child
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def _read_from_directory_descriptor(
+    directory_descriptor: int,
+    filename: str,
+    expected_digest: str,
+    expected_length: int,
+    max_bytes: int,
+) -> bytes:
+    if (
+        filename in {"", ".", ".."}
+        or "/" in filename
+        or not isinstance(expected_digest, str)
+        or len(expected_digest) != 64
+        or any(character not in "0123456789abcdef" for character in expected_digest)
+        or isinstance(expected_length, bool)
+        or not isinstance(expected_length, int)
+        or expected_length < 1
+        or isinstance(max_bytes, bool)
+        or not isinstance(max_bytes, int)
+        or max_bytes < 1
+        or expected_length > max_bytes
+    ):
+        raise ArtifactStoreError("artifact_read_contract_invalid")
+    flags = _descriptor_read_flags(directory=False)
+    try:
+        descriptor = os.open(filename, flags, dir_fd=directory_descriptor)
+    except OSError as error:
+        raise ArtifactStoreError("artifact_file_invalid") from error
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ArtifactStoreError("artifact_file_invalid")
+        if before.st_size != expected_length or before.st_size > max_bytes:
+            raise ArtifactStoreError("length_mismatch")
+        remaining = expected_length
+        digest = hashlib.sha256()
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(_READ_CHUNK_BYTES, remaining))
+            if not chunk:
+                raise ArtifactStoreError("short_read")
+            chunks.append(chunk)
+            digest.update(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise ArtifactStoreError("length_mismatch")
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != expected_length
+            or not stat.S_ISREG(after.st_mode)
+        ):
+            raise ArtifactStoreError("artifact_changed_during_read")
+        if not hmac.compare_digest(digest.hexdigest(), expected_digest):
+            raise ArtifactStoreError("digest_mismatch")
+        return b"".join(chunks)
+    except OSError as error:
+        raise ArtifactStoreError("artifact_read_failed") from error
+    finally:
+        os.close(descriptor)
+
+
+def read_verified(
+    data_root: Path,
+    relative_path: str,
+    expected_digest: str,
+    expected_length: int,
+    *,
+    max_bytes: int,
+) -> bytes:
+    parts = _relative_parts(relative_path)
+    directory = _open_directory_descriptor(data_root, Path(*parts[:-1]).as_posix())
+    try:
+        return _read_from_directory_descriptor(
+            directory, parts[-1], expected_digest, expected_length, max_bytes
+        )
+    finally:
+        os.close(directory)
 
 
 def install_fixed_blob(
@@ -283,28 +439,39 @@ def install_candidate_bundle(
 def verify_candidate_bundle(
     data_root: Path,
     relative_directory: str,
-    expected: Mapping[str, tuple[str, int]],
+    expected: Mapping[str, tuple[str, int, int]],
 ) -> dict[str, bytes]:
-    root = data_root.resolve()
-    directory = _within(root / relative_directory, root)
-    if directory.is_symlink() or not directory.is_dir():
-        raise ArtifactStoreError("candidate_directory_invalid")
-    entries = list(directory.iterdir())
-    if {entry.name for entry in entries} != set(CANDIDATE_FILENAMES):
+    if set(expected) != set(CANDIDATE_FILENAMES) or not _LISTDIR_SUPPORTS_FD:
         raise ArtifactStoreError("candidate_file_set_invalid")
-    result: dict[str, bytes] = {}
-    for entry in entries:
-        if entry.is_symlink() or not entry.is_file():
-            raise ArtifactStoreError("candidate_file_invalid")
-        record = expected.get(entry.name)
-        if record is None:
+    directory = _open_directory_descriptor(data_root, relative_directory)
+    try:
+        try:
+            names = os.listdir(directory)
+        except OSError as error:
+            raise ArtifactStoreError("candidate_directory_invalid") from error
+        if set(names) != set(CANDIDATE_FILENAMES) or len(names) != len(CANDIDATE_FILENAMES):
             raise ArtifactStoreError("candidate_file_set_invalid")
-        raw = entry.read_bytes()
-        digest, length = record
-        if len(raw) != length or hashlib.sha256(raw).hexdigest() != digest:
-            raise ArtifactStoreError("candidate_integrity_invalid")
-        result[entry.name] = raw
-    return result
+        result: dict[str, bytes] = {}
+        for name in CANDIDATE_FILENAMES:
+            record = expected[name]
+            if not isinstance(record, tuple) or len(record) != 3:
+                raise ArtifactStoreError("candidate_read_contract_invalid")
+            digest, length, max_bytes = record
+            try:
+                result[name] = _read_from_directory_descriptor(
+                    directory, name, digest, length, max_bytes
+                )
+            except ArtifactStoreError as error:
+                raise ArtifactStoreError("candidate_integrity_invalid") from error
+        try:
+            final_names = os.listdir(directory)
+        except OSError as error:
+            raise ArtifactStoreError("candidate_directory_invalid") from error
+        if set(final_names) != set(CANDIDATE_FILENAMES) or len(final_names) != len(CANDIDATE_FILENAMES):
+            raise ArtifactStoreError("candidate_file_set_invalid")
+        return result
+    finally:
+        os.close(directory)
 
 
 def quarantine_candidate_bundle(

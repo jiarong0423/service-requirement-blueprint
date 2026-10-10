@@ -59,6 +59,24 @@ def immediate_transaction(connection: sqlite3.Connection) -> Iterator[None]:
             raise
 
 
+@contextmanager
+def deferred_read_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """Hold one WAL read snapshot without reserving the database writer."""
+    connection.execute("BEGIN")
+    try:
+        yield
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+    else:
+        try:
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+
+
 def _migration_statements(script: str) -> Iterator[str]:
     """Yield complete SQLite statements without splitting trigger bodies."""
     buffer: list[str] = []

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import sqlite3
 import uuid
+from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import app.services.candidate_workflow as candidate_module
+from app import create_app
 from app.db import connect_database
 from app.services.candidate_workflow import (
     CandidateWorkflowError,
@@ -15,7 +20,7 @@ from app.services.candidate_workflow import (
     reconcile_candidate_storage,
 )
 from app.services.candidate_documents import CandidateBundle
-from app.services.document_integrity import DocumentIntegrityError
+from app.services.document_integrity import DocumentIntegrityError, FileRecord
 from tests.slice5_helpers import create_json_b_review
 
 
@@ -47,6 +52,44 @@ def test_render_failure_leaves_no_candidate_files_or_rows(demo_runtime, monkeypa
         assert connection.execute("SELECT state FROM cases WHERE id = ?", (context["case_id"],)).fetchone()[0] == "JSON_B_REVIEW"
         candidates = context["instance_root"] / "data" / "cases" / context["case_id"] / "candidates"
         assert not candidates.exists() or not any(candidates.iterdir())
+    finally:
+        connection.close()
+
+
+def test_candidate_source_files_are_not_read_inside_writer_transaction(
+    demo_runtime, monkeypatch
+) -> None:
+    context = create_json_b_review(demo_runtime)
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    writer_active = False
+    original_transaction = candidate_module.immediate_transaction
+    original_read_document = candidate_module._read_document
+    original_sha256 = candidate_module.hashlib.sha256
+
+    @contextmanager
+    def tracked_transaction(active_connection):
+        nonlocal writer_active
+        with original_transaction(active_connection):
+            writer_active = True
+            try:
+                yield
+            finally:
+                writer_active = False
+
+    def guarded_read(*args, **kwargs):
+        assert writer_active is False
+        return original_read_document(*args, **kwargs)
+
+    def guarded_sha256(*args, **kwargs):
+        assert writer_active is False
+        return original_sha256(*args, **kwargs)
+
+    monkeypatch.setattr(candidate_module, "immediate_transaction", tracked_transaction)
+    monkeypatch.setattr(candidate_module, "_read_document", guarded_read)
+    monkeypatch.setattr(candidate_module.hashlib, "sha256", guarded_sha256)
+    try:
+        result = create_candidate(*_args(context, connection))
+        assert result.created is True
     finally:
         connection.close()
 
@@ -114,6 +157,126 @@ def test_reconciliation_quarantines_orphan_staging_and_final_directories(demo_ru
     quarantined = {entry.name for entry in (case_root / "quarantine").iterdir()}
     assert len(quarantined) == 2
     assert any(name.startswith("staging-") for name in quarantined)
+
+
+def test_reconciliation_preserves_historical_superseded_candidate_directory(tmp_path: Path) -> None:
+    case_id = str(uuid.uuid4())
+    candidate_id = str(uuid.uuid4())
+    contractor_id = str(uuid.uuid4())
+    historical = tmp_path / "cases" / case_id / "candidates" / candidate_id
+    historical.mkdir(parents=True)
+    payloads = {
+        "manifest.json": b"historical manifest bytes",
+        "document.pdf": b"historical PDF bytes",
+        "diagram.svg": b"historical SVG bytes",
+    }
+    artifact_ids = {name: str(uuid.uuid4()) for name in payloads}
+    for name, raw in payloads.items():
+        (historical / name).write_bytes(raw)
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute(
+            "CREATE TABLE candidate_versions(case_id TEXT, id TEXT, state TEXT, created_by_id TEXT, "
+            "version_no INTEGER, manifest_artifact_id TEXT, pdf_artifact_id TEXT, svg_artifact_id TEXT)"
+        )
+        connection.execute("CREATE TABLE cases(id TEXT, state TEXT, active_candidate_id TEXT, formal_candidate_id TEXT)")
+        connection.execute(
+            "CREATE TABLE artifacts(id TEXT, case_id TEXT, author_id TEXT, version_no INTEGER, kind TEXT, "
+            "visibility TEXT, relative_path TEXT, sha256 TEXT, byte_length INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO candidate_versions VALUES (?, ?, 'SUPERSEDED', ?, 1, ?, ?, ?)",
+            (case_id, candidate_id, contractor_id, artifact_ids["manifest.json"], artifact_ids["document.pdf"], artifact_ids["diagram.svg"]),
+        )
+        connection.execute(
+            "INSERT INTO cases(id, state, active_candidate_id, formal_candidate_id) VALUES (?, 'JSON_B_REVIEW', NULL, NULL)",
+            (case_id,),
+        )
+        for name, kind in (
+            ("manifest.json", "candidate_manifest"),
+            ("document.pdf", "candidate_pdf"),
+            ("diagram.svg", "candidate_svg"),
+        ):
+            raw = payloads[name]
+            connection.execute(
+                "INSERT INTO artifacts VALUES (?, ?, ?, 1, ?, 'party_only', ?, ?, ?)",
+                (artifact_ids[name], case_id, contractor_id, kind, f"cases/{case_id}/candidates/{candidate_id}/{name}", hashlib.sha256(raw).hexdigest(), len(raw)),
+            )
+        reconcile_candidate_storage(connection, tmp_path)
+        (historical / "document.pdf").write_bytes(b"tampered PDF bytes")
+        with pytest.raises(CandidateWorkflowError, match="candidate_integrity_invalid"):
+            reconcile_candidate_storage(connection, tmp_path)
+    finally:
+        connection.close()
+    assert (historical / "manifest.json").read_bytes() == payloads["manifest.json"]
+    assert not any((tmp_path / "cases" / case_id / "quarantine").iterdir())
+
+
+def test_current_candidate_survives_current_asset_rotation_with_exact_saved_bytes(
+    demo_runtime,
+    monkeypatch,
+) -> None:
+    context = create_json_b_review(demo_runtime)
+    data_root = context["instance_root"] / "data"
+    database = context["instance_root"] / "app.sqlite3"
+    connection = connect_database(database)
+    try:
+        result = create_candidate(*_args(context, connection))
+        before = {
+            filename: read_candidate_component(
+                connection,
+                data_root,
+                context["case_id"],
+                result.candidate_id,
+                context["owner_id"],
+                filename,
+                context["app"].config["DOCUMENT_ASSETS"],
+            )
+            for filename in ("manifest.json", "document.pdf", "diagram.svg")
+        }
+    finally:
+        connection.close()
+
+    original_assets = context["app"].config["DOCUMENT_ASSETS"]
+    rotated_assets = replace(
+        original_assets,
+        catalog_record=FileRecord("catalog.en.json", "application/json", "1" * 64, 1),
+        label_record=FileRecord("candidate-labels.v1.json", "application/json", "2" * 64, 1),
+    )
+    monkeypatch.setattr("app.load_and_validate_document_assets", lambda _root: rotated_assets)
+    create_app(
+        {
+            "TESTING": False,
+            "SECRET_KEY": (context["instance_root"] / "secret.key").read_bytes(),
+            "INSTANCE_ROOT": context["instance_root"],
+            "DATABASE": database,
+            "DATA_ROOT": data_root,
+            "SESSION_COOKIE_SECURE": False,
+        }
+    )
+
+    connection = connect_database(database)
+    try:
+        after = {
+            filename: read_candidate_component(
+                connection,
+                data_root,
+                context["case_id"],
+                result.candidate_id,
+                context["owner_id"],
+                filename,
+                rotated_assets,
+            )
+            for filename in ("manifest.json", "document.pdf", "diagram.svg")
+        }
+
+        assert after == before
+        assert connection.execute(
+            "SELECT state FROM candidate_versions WHERE id = ?", (result.candidate_id,)
+        ).fetchone()[0] == "CURRENT"
+    finally:
+        connection.close()
 
 
 def test_expired_quote_rejects_without_files(demo_runtime) -> None:

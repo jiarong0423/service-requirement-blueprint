@@ -1,0 +1,187 @@
+1
+00:00:00,000 --> 00:00:05,000
+A Taiwan website offer. From one hundred
+ninety-nine New Taiwan dollars.
+
+2
+00:00:05,000 --> 00:00:09,167
+Mobile layout, a form, deployment,
+unlimited revisions.
+
+3
+00:00:09,167 --> 00:00:14,633
+The quote is simpler. One static page.
+Client-provided content. One revision.
+
+4
+00:00:14,633 --> 00:00:18,267
+Service Requirement Blueprint makes the
+gap visible.
+
+5
+00:00:18,267 --> 00:00:22,992
+The client writes down what they need.
+JSON A freezes that baseline.
+
+6
+00:00:22,992 --> 00:00:26,467
+It records the workflow, deliverables, and
+budget.
+
+7
+00:00:26,467 --> 00:00:29,449
+This scene illustrates the negotiation.
+
+8
+00:00:29,449 --> 00:00:35,338
+The client asks for the form and mobile
+button. The contractor includes both.
+
+9
+00:00:35,338 --> 00:00:39,392
+Deployment stays excluded. So do unlimited
+revisions.
+
+10
+00:00:39,392 --> 00:00:42,833
+They agree on the checks before
+confirmation.
+
+11
+00:00:42,833 --> 00:00:49,500
+Now the actual case record. Both parties'
+messages stay in the case record.
+
+12
+00:00:49,500 --> 00:00:54,544
+JSON B states the revised offer. The form
+and mobile button are included.
+
+13
+00:00:54,544 --> 00:00:57,929
+Deployment and unlimited revisions stay
+excluded.
+
+14
+00:00:57,929 --> 00:01:00,900
+The fee and acceptance checks are
+explicit.
+
+15
+00:01:00,900 --> 00:01:06,367
+Test the form. Check the button at three
+hundred ninety pixels.
+
+16
+00:01:06,367 --> 00:01:12,028
+The client asks. The contractor answers.
+The client accepts the revised scope.
+
+17
+00:01:12,028 --> 00:01:14,133
+The issue is marked resolved.
+
+18
+00:01:14,133 --> 00:01:18,667
+One party has confirmed. The other is
+still pending.
+
+19
+00:01:18,667 --> 00:01:21,448
+Both parties confirm the same version.
+
+20
+00:01:21,448 --> 00:01:25,033
+That fixed version becomes their shared
+baseline.
+
+21
+00:01:25,033 --> 00:01:30,500
+The shared PDF preserves that version and
+its workflow diagram.
+
+22
+00:01:30,500 --> 00:01:36,838
+The PDF also records scope, exclusions,
+fees, and acceptance checks.
+
+23
+00:01:36,838 --> 00:01:40,100
+Silence never counts as acceptance.
+
+24
+00:01:40,100 --> 00:01:44,581
+The form passes. The mobile button fails
+the agreed check.
+
+25
+00:01:44,581 --> 00:01:48,367
+The client records why and requests a
+correction.
+
+26
+00:01:48,367 --> 00:01:50,151
+This is a demonstration record.
+
+27
+00:01:50,151 --> 00:01:53,833
+The contractor documents the correction
+and supporting evidence.
+
+28
+00:01:53,833 --> 00:01:58,367
+Resubmission starts a new inspection. The
+earlier return stays in history.
+
+29
+00:01:58,367 --> 00:02:02,633
+The client checks both items again. Both
+pass.
+
+30
+00:02:02,633 --> 00:02:06,621
+The client explicitly accepts the
+delivery.
+
+31
+00:02:06,621 --> 00:02:12,000
+Nothing is approved automatically. Silence
+does not count.
+
+32
+00:02:12,000 --> 00:02:16,851
+The record keeps the full sequence. The
+failure. The correction.
+
+33
+00:02:16,851 --> 00:02:18,367
+The accepted result.
+
+34
+00:02:18,367 --> 00:02:22,733
+Either party can export the same evidence
+package.
+
+35
+00:02:22,733 --> 00:02:26,951
+Here are the verified downloads. A shared
+PDF. Version records.
+
+36
+00:02:26,951 --> 00:02:30,900
+Delivery and inspection evidence. All
+preserved in one ZIP.
+
+37
+00:02:30,900 --> 00:02:34,775
+The timeline links the delivery, return,
+and correction.
+
+38
+00:02:34,775 --> 00:02:37,267
+It also records explicit acceptance.
+
+39
+00:02:37,267 --> 00:02:41,800
+The platform preserves evidence. It does
+not decide who's right.

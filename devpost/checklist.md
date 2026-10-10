@@ -79,7 +79,7 @@ The competition build is English-only and globally neutral. `/en/<path>` is the 
   - Build: immutable delivery and test records, inspection item results, remediation, reinspection, explicit acceptance, deadline events without consent, disputes, party-only export, English README, English demo guide, and factual English submission evidence.
   - Verify: complete English end-to-end journey, returned item, remediation, acceptance, dispute, export contents, private-draft exclusion, log redaction, restart, outbound-network denial, and bounded loopback subprocess cleanup.
   - Stop: automatic acceptance, platform adjudication, formal-file change, private draft in export, payment behavior, public publishing, remote push, or deployment.
-  - Mechanical status: commit `c619738` passed 56 focused checks with one sandbox-only loopback skip, the 202-test full regression suite with the same single skip, and a separate permitted loopback run with one pass and confirmed port release. Independent product, security, and exact staged-index reviews returned O after repairs for exact acceptance identity, the 20-version cap, append-only child records, evidence-export fingerprint verification, safe archive entries, startup/read-time reconciliation, and the 25-file commit boundary. Responsive follow-up commit `e7b7306` added an accessible contained table scroller, passed all 28 Slice 7 delivery/migration tests, and raised the full regression result to 203 passed with the same single sandbox-only loopback skip. After the App Map documentation test was added, the sanitized 6-ship candidate passed 204 tests with that same one sandbox-only skip on 2026-10-07. Dependency, compile, schema, planning-renderer, diff, and secret-boundary checks also passed.
+  - Mechanical status: commit `c619738` passed 56 focused checks with one sandbox-only loopback skip, the 202-test full regression suite with the same single skip, and a separate permitted loopback run with one pass and confirmed port release. Independent product, security, and exact staged-index reviews returned O after repairs for exact acceptance identity, the 20-version cap, append-only child records, evidence-export fingerprint verification, safe archive entries, startup/read-time reconciliation, and the 25-file commit boundary. Responsive follow-up commit `e7b7306` added an accessible contained table scroller, passed all 28 Slice 7 delivery/migration tests, and raised the full regression result to 203 passed with the same single sandbox-only loopback skip. Dependency, compile, schema, planning-renderer, diff, and secret-boundary checks also passed.
   - Learner check: passed on 2026-10-07. After reviewing the completed App Map and prior hands-on evidence, the learner explicitly stated, "The PoC is ready to enter 6-ship." An isolated proxy audit completed delivery, returned inspection, remediation, reinspection, explicit acceptance, history review, and evidence export; all 10 manifest entry digests matched. The final narrow-viewport repair was independently verified at 660 and 789 CSS-pixel viewports without whole-page overflow or per-letter fragmentation.
   - Commit: `Complete delivery review and English ship evidence`
 
@@ -90,6 +90,94 @@ The competition build is English-only and globally neutral. `/en/<path>` is the 
 - [x] Slice 7: delivery, remediation, acceptance, dispute evidence, export, and English documentation. Mechanical and isolated proxy audits passed; the learner approved entry to `6-ship` on 2026-10-07.
 
 Fast mode adds no other human pause. Mechanical gates and independent verification still run for every slice.
+
+## Historical Local Desktop UI Refactor — STALE
+
+The evidence in this section records the earlier desktop-shell review and is retained for history. It was superseded by the human-workflow and artifact-compatibility repair in commit `c5c9d07`; its old catalog hash, test counts, diff scope, and temporary visual artifacts do not prove the current build. Publication, Devpost final submission, remote push, deployment, payments, additional locales, and change-order work remain frozen until the current gates pass.
+
+```mermaid
+flowchart LR
+    A["Completed Flask workflow O"] --> B["Form and action matrix O"]
+    B --> C["Sections 4-8 repopulation O"]
+    C --> D["1400px app shell O"]
+    D --> E["Clarify / Confirm / Deliver hierarchy O"]
+    E --> F["Focused and full tests O"]
+    F --> G["1920x1080 and 1440x900 visual review O"]
+    G --> H["Local learner acceptance O"]
+    H --> I["Fresh recording preparation ACTIVE"]
+    J["Devpost publication / push / deploy FROZEN"]
+    K["Catalog bytes / candidate rebuild FROZEN"]
+    L["Payments / extra locales / change orders FROZEN"]
+```
+
+### Form and action preservation matrix
+
+| Surface | Method and action | Preserved contract | Primary user action |
+| --- | --- | --- | --- |
+| Session | `POST /en/login`, `POST /en/logout` | CSRF, generic login errors, session reset | Sign in or sign out |
+| Client requirements | `POST /en/owner/requirements`; `POST` to sections 1–8 | CSRF, `expected_revision`, all existing field names | Create draft or save and continue |
+| JSON A and invitation | Existing JSON A, preview, invitation, revoke, accept, reject, and import routes | Exact upload bytes, multipart names, `expected_revision`, invitation binding | Create or verify the private case |
+| Case discussion | Existing message and issue event routes | CSRF, `idempotency_key`, `correction_of_id`, `expected_revision` | Resolve the current question |
+| JSON B | Existing draft, export, import, objection, revise, and candidate routes | CSRF, `expected_revision`, `artifact_id`, multipart file names | Submit the current proposal version |
+| Candidate confirmation | Existing acknowledgement, confirmation, withdrawal, and revision routes | CSRF, candidate identity, `expected_revision` | Confirm or request revision |
+| Formal version | Existing verification downloads and separate-proposal route | Same stored bytes, `idempotency_key`, party authorization | Continue to delivery |
+| Delivery | Existing delivery, inspection, dispute, position, and evidence-export routes | CSRF, `expected_revision`, `idempotency_key`, dynamic criterion field names | Perform the state-appropriate next action |
+| Administration | Existing account status and service-health routes | CSRF, application-level content isolation | Manage accounts or check service health |
+
+### Refactor gates
+
+- [x] Sections 4–8 restore every saved value before step or Back navigation.
+- [x] A shared desktop shell shows role, understandable status, workflow position, next action, and one primary CTA.
+- [x] The home page communicates the problem and Clarify, Confirm, Deliver within the first viewport.
+- [x] Candidate, formal, delivery, and case pages move UUIDs, hashes, manifests, raw JSON, and event history below the main task inside closed verification or history details.
+- [x] Client, contractor, and administrator pages use the same shell; administrator pages state that administrators cannot access private case content.
+- [x] No catalog, schema, PDF, SVG, manifest, persisted case data, route, request method, or security boundary changes.
+- [x] Focused form-contract and authorization tests pass before the full suite.
+- [x] Local 1920×1080 and 1440×900 review artifacts confirm the first viewport contains product purpose, user role, current status, next action, and no raw UUID, hash, manifest, or JSON dump.
+- [x] Local visual acceptance completed; advance only recording preparation. Keep Devpost publication, remote push, and deployment frozen until the local media gate passes.
+
+### Verification evidence
+
+- [x] `app/i18n/catalog.en.json` remains exactly SHA-256 `9b028ffb3a846ba7ae43880ef7a0746f8cb1fb88b18d2e5212478af1a063f3fc`.
+- [x] Every rendered action state exposes at most one `data-ui="primary-action"` element.
+- [x] Role, human-readable status, workflow stage, and next action use stable `data-ui` hooks.
+- [x] Technical verification and history use closed `details` elements without the `open` attribute.
+- [x] POST actions, methods, encodings, CSRF fields, concurrency fields, idempotency keys, artifact bindings, correction bindings, and dynamic acceptance-criterion names match the pre-refactor contract.
+- [x] CSP remains self-only and templates add no remote script, stylesheet, image, font, frame, or form target.
+- [x] Focused UI, authorization, route, and workflow tests pass: 63 passed.
+- [x] The complete regression suite passes: 219 passed and one sandbox-only loopback test skipped.
+- [x] Browser review passes at 1920×1080 and 1440×900; existing automated responsive-width checks also pass.
+- [x] Git diff contains no catalog, schema, document renderer, migration, runtime data, remote, or deployment change.
+
+Temporary local review artifacts `service-requirement-blueprint-ui-review-1920x1080.html` (SHA-256 `4a36887ae017ef841a0d5d1f2a64be193eda4cea47a254846916a636d37aeb44`) and `service-requirement-blueprint-ui-review-1440x900.html` (SHA-256 `9beae3bedc0545e917b7251e02807147fe00298e7b423b1f5bf46870cdc260e7`) contain eight synthetic, de-identified, self-contained review surfaces and no runtime credentials or external assets.
+
+## Historical Recording Workflow Repair Checkpoint — Recording Frozen
+
+Functional repair head: `f0cc808bfec8b1b1c34aa017a7d02fabca139d78` (base repair `8164bf175c30679a3703e0ef8b7f5116cf40eaa5`).
+
+The checked results below belong to that earlier head. The identity of any later release candidate comes from its generated `public-export-manifest.json` and fresh independent receipts. These historical checks do not count toward the five current browser passes.
+
+- [x] Historical `CURRENT` confirmation versions remain readable after catalog and document-template rotation; saved manifest, PDF, and SVG bytes remain unchanged.
+- [x] Case-room issue handling gives the eligible role one explicit primary action for proposing or accepting the treatment before confirmation can continue.
+- [x] UI and PDF rendering share a field-aware semantic registry. Known schema enums and machine-style codes are humanized while user-authored notes remain unchanged.
+- [x] Invitation status and tasks use centralized role/state mappings; exact source identity stays in a closed verification disclosure.
+- [x] The recording graph, route-accurate shot list, 14-asset production package, and 105-second subtitle contract use the same objection, revision, treatment, acceptance, confirmation, delivery, and evidence order.
+- [x] Stale Evidence ZIP downloads are rejected after the case evidence changes; unchanged current evidence reuses the same stored ZIP bytes.
+- [x] JSON B objections are role-bound and the client's acceptance is bound to the proposal artifact the contractor actually referenced.
+- [x] The formal page gives both parties exact-byte downloads for JSON A, JSON B, PDF, SVG, and manifest; outsiders remain denied.
+- [x] The public-candidate builder reads one exact clean Git commit, binds its tree and file inventory, verifies bundled font provenance, and fails closed on dirty input, overwrite, missing files, digest mismatch, or private absolute paths.
+- [x] `app/i18n/catalog.en.json` SHA-256 is `5fbfd7fb9371c2b82a0635e73974aa958ff39eeed140892bda4ba13731b0ccb4`.
+- [x] Focused repair checks pass: 94 passed.
+- [x] Complete regression passes: 283 passed.
+- [x] The Claude Cloud review of source commit `6a13baf93e75f6b96b4a5f4d931cfe759fa96d9c` reported 0 P0 and 7 P1 findings; all seven P1 repairs are included in base repair `8164bf175c30679a3703e0ef8b7f5116cf40eaa5`, and click-preflight recovery fixes are included in functional head `f0cc808bfec8b1b1c34aa017a7d02fabca139d78`.
+- [x] Independent read-only re-review of the functional repair head: PASS with 0 remaining P0/P1 findings; 4 focused checks passed.
+## Current source synchronization and submission handoff
+
+The learner authorized the latest sanitized source synchronization. Its generated `public-export-manifest.json` and public security receipts identify the exact candidate; prior test counts and browser passes above remain historical. Independent current static review found the UI form/CSRF/role contracts intact. The extracted current candidate passed 322 tests with one sandbox loopback skip; that server start/stop test passed separately. Exact source and public-package inventory checks passed. Final security receipts and post-push readback close synchronization; generated receipts distinguish the tested source from a later documentation-only status correction.
+
+The edited video candidate is now 161.8 seconds at 1.1× speed, with 23 scenes and 39 subtitle cues. The earlier 105-second contract is superseded. `demo-capture-guide.md`, `demo-shot-list.md`, `demo-voiceover.txt`, and `demo-script.srt` describe the current edit. Recorded actions, stills, illustrations, and off-camera artifact checks have distinct evidence limits.
+
+Remaining submission gates are continuous human audiovisual review, a hosted video URL, learner review of the AI-assisted English draft, personal eligibility answers, and the exit survey. Deployment and peer feedback remain optional. No unchecked historical recording row is treated as a current source failure, and no source synchronization is treated as Devpost submission approval.
 
 ## Final Review
 

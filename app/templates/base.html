@@ -8,14 +8,19 @@
   <script defer src="{{ url_for('static', filename='js/app.js') }}"></script>
 </head>
 <body>
-  <header class="site-header">
-    <a class="brand" href="/{{ locale }}/">{{ tr('app.name') }}</a>
-    <nav>
-      {% if g.user %}<a href="/{{ locale }}/account">{{ tr('nav.account') }}</a>{% endif %}
-      {% if g.user %}<form class="inline" method="post" action="/{{ locale }}/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>{{ tr('action.sign_out') }}</button></form>{% endif %}
-    </nav>
+  <header class="site-header" data-ui="app-shell">
+    <div class="app-shell topbar">
+      <a class="brand" href="/{{ locale }}/"><span class="brand-mark" aria-hidden="true">SR</span><span>{{ tr('app.name') }}</span></a>
+      <nav class="app-nav" aria-label="Primary navigation">
+        <a href="/{{ locale }}/">Overview</a>
+        {% if not g.user %}<a href="/{{ locale }}/login">{{ tr('action.sign_in') }}</a>{% endif %}
+        {% if g.user and g.user.system_role != 'admin' %}<a href="/{{ locale }}/account">Workspace</a>{% endif %}
+        {% if g.user and g.user.system_role == 'admin' %}<a href="/{{ locale }}/admin/accounts">Administration</a>{% endif %}
+        {% if g.user %}<form class="inline" method="post" action="/{{ locale }}/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-quiet">{{ tr('action.sign_out') }}</button></form>{% endif %}
+      </nav>
+    </div>
   </header>
-  <main>{% block content %}{% endblock %}</main>
-  <footer>{{ tr('notice.local_only') }}</footer>
+  <main class="app-shell app-main {% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
+  <footer><div class="app-shell footer-inner"><span>{{ tr('notice.local_only') }}</span><span>Competition demonstration</span></div></footer>
 </body>
 </html>

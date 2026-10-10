@@ -1,0 +1,45 @@
+A Taiwan website offer. From one hundred ninety-nine New Taiwan dollars.
+
+Mobile layout, a form, deployment, unlimited revisions.
+
+The quote is simpler. One static page. Client-provided content. One revision.
+
+Service Requirement Blueprint makes the gap visible.
+
+The client writes down what they need. JSON A freezes that baseline. It records the workflow, deliverables, and budget.
+
+This scene illustrates the negotiation. The client asks for the form and mobile button. The contractor includes both. Deployment stays excluded. So do unlimited revisions. They agree on the checks before confirmation.
+
+Now the actual case record. Both parties' messages stay in the case record.
+
+JSON B states the revised offer. The form and mobile button are included. Deployment and unlimited revisions stay excluded. The fee and acceptance checks are explicit.
+
+Test the form. Check the button at three hundred ninety pixels.
+
+The client asks. The contractor answers. The client accepts the revised scope. The issue is marked resolved.
+
+One party has confirmed. The other is still pending.
+
+Both parties confirm the same version. That fixed version becomes their shared baseline.
+
+The shared PDF preserves that version and its workflow diagram.
+
+The PDF also records scope, exclusions, fees, and acceptance checks. Silence never counts as acceptance.
+
+The form passes. The mobile button fails the agreed check. The client records why and requests a correction.
+
+This is a demonstration record. The contractor documents the correction and supporting evidence.
+
+Resubmission starts a new inspection. The earlier return stays in history.
+
+The client checks both items again. Both pass. The client explicitly accepts the delivery. Nothing is approved automatically. Silence does not count.
+
+The record keeps the full sequence. The failure. The correction. The accepted result.
+
+Either party can export the same evidence package.
+
+Here are the verified downloads. A shared PDF. Version records. Delivery and inspection evidence. All preserved in one ZIP.
+
+The timeline links the delivery, return, and correction. It also records explicit acceptance.
+
+The platform preserves evidence. It does not decide who's right.

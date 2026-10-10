@@ -1,0 +1,92 @@
+{
+  "schema": "public-source-verification/1.0",
+  "reviewed_at": "2026-10-11T06:28:03+08:00",
+  "source_commit": "707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a",
+  "source_manifest_sha256": "22aa69d9e8fda3cd3a9318c9c03a515d60fa4995f93081b5ec83df692e972a36",
+  "source_file_count": 141,
+  "local_full_regression": {
+    "commit": "0095518c2c01249e2a51405fc41b46dd88147fc6",
+    "passed": 322,
+    "skipped": 1,
+    "skip_reason": "sandbox loopback binding unavailable",
+    "loopback_separately_passed": 1,
+    "final_delta": "Only README, four diagram assets and public-builder allowlist added after full suite; focused ship/export checks passed 15; runtime and existing tests byte-identical."
+  },
+  "semgrep": {
+    "tool": "Semgrep Core 1.176.0",
+    "rule_families": 6,
+    "python_files_scanned": 71,
+    "errors": 0,
+    "matches": 5,
+    "runtime_and_tools_matches": 0,
+    "reviewed_matches": [
+      {
+        "rule": "srb.unbounded-template-string",
+        "path": "tests/test_presentation_contract.py",
+        "line": 83,
+        "disposition": "TEST_ONLY_STATIC_TEMPLATE_LITERAL; context arguments do not become template source",
+        "review": "Root confirmed fixed literal expressions in synthetic pytest request contexts; Independent verifier confirmed these are nonsecurity matches in fixed-literal test templates."
+      },
+      {
+        "rule": "srb.unbounded-template-string",
+        "path": "tests/test_presentation_contract.py",
+        "line": 112,
+        "disposition": "TEST_ONLY_STATIC_TEMPLATE_LITERAL; context arguments do not become template source",
+        "review": "Root confirmed fixed literal expressions in synthetic pytest request contexts; Independent verifier confirmed these are nonsecurity matches in fixed-literal test templates."
+      },
+      {
+        "rule": "srb.unbounded-template-string",
+        "path": "tests/test_presentation_contract.py",
+        "line": 146,
+        "disposition": "TEST_ONLY_STATIC_TEMPLATE_LITERAL; context arguments do not become template source",
+        "review": "Root confirmed fixed literal expressions in synthetic pytest request contexts; Independent verifier confirmed these are nonsecurity matches in fixed-literal test templates."
+      },
+      {
+        "rule": "srb.unbounded-template-string",
+        "path": "tests/test_presentation_contract.py",
+        "line": 156,
+        "disposition": "TEST_ONLY_STATIC_TEMPLATE_LITERAL; context arguments do not become template source",
+        "review": "Root confirmed fixed literal expressions in synthetic pytest request contexts; Independent verifier confirmed these are nonsecurity matches in fixed-literal test templates."
+      },
+      {
+        "rule": "srb.unbounded-template-string",
+        "path": "tests/test_presentation_contract.py",
+        "line": 179,
+        "disposition": "TEST_ONLY_STATIC_TEMPLATE_LITERAL; context arguments do not become template source",
+        "review": "Root confirmed fixed literal expressions in synthetic pytest request contexts; Independent verifier confirmed these are nonsecurity matches in fixed-literal test templates."
+      }
+    ],
+    "scope_limit": "Bounded defensive rules, not full commercial SAST or penetration testing.",
+    "scanned_source_commit": "31d03f82e2afa233c5387e0f584130931b1c6aed"
+  },
+  "secret_scan": {
+    "tool": "gitleaks",
+    "source_current_files_findings": 0,
+    "existing_public_history_findings": 0,
+    "final_package_scan": "PASS",
+    "final_package_findings": 0,
+    "final_package_exit_code": 0
+  },
+  "publication_scope": "Source, documentation, diagrams, pins, licenses and current security overlays only; no canonical private Git history or runtime data.",
+  "extracted_package_full_regression": {
+    "source_commit": "31d03f82e2afa233c5387e0f584130931b1c6aed",
+    "tests": 323,
+    "passed": 322,
+    "skipped": 1,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 226.252,
+    "skip_reason": "sandbox loopback binding unavailable",
+    "loopback_separate_passed": 1,
+    "test_runtime_artifacts": "Retained only in tested isolation directory; excluded from rebuilt immutable publish package"
+  },
+  "final_documentation_delta": {
+    "tested_source_commit": "31d03f82e2afa233c5387e0f584130931b1c6aed",
+    "final_source_commit": "707b3fa74d1da18bfbc8e80d9c7246e43d8a1d7a",
+    "only_changed_source": "devpost/checklist.md",
+    "reason": "Replace stale pending-test status with actual completed results",
+    "focused_checks_passed": 15,
+    "seconds": 5.32,
+    "runtime_test_tool_blobs_changed": false
+  }
+}

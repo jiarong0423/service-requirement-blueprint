@@ -1,21 +1,37 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import human_issue_kind, human_issue_state, human_state, workflow_context_bar, workflow_stage_label with context %}
 {% block title %}{{ tr('page.private_case') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
 {% set editable = case.state not in ('CANDIDATE_REVIEW', 'FORMAL') %}
-<div class="progress">{{ tr('case.party_only') }} · {% if case.state == 'FORMAL' %}{{ tr('status.formal') }}{% elif case.state == 'CANDIDATE_REVIEW' %}{{ tr('status.candidate_review') }}{% else %}{{ tr('status.case_active') }}{% endif %}</div>
+{% if formal_candidate %}{% set current_task = ui('case_room', 'task_formal') %}
+{% elif current_candidate %}{% set current_task = ui('case_room', 'task_confirmation') %}
+{% elif case_role == 'contractor' and case.state == 'JSON_B_PRIVATE_DRAFT' %}{% set current_task = ui('case_room', 'task_prepare') %}
+{% elif primary_issue %}{% set current_task = ui('case_room', 'task_resolve') %}
+{% elif current_review %}{% set current_task = ui('case_room', 'task_proposal') %}
+{% elif case_role == 'contractor' %}{% set current_task = ui('case_room', 'task_prepare') %}
+{% else %}{% set current_task = ui('case_room', 'task_wait_proposal') %}{% endif %}
+{{ workflow_context_bar(tr('role.owner') if case_role == 'client' else tr('role.contractor'), case.state, human_state(case.state), current_task) }}
 <section class="card stack">
   <header class="section-heading">
     <div>
-      <p class="eyebrow">{{ tr('page.private_case') }}</p>
+      <p class="eyebrow">{{ workflow_stage_label(case.state) }} · {{ tr('page.private_case') }}</p>
       <h1 data-user-content>{{ case.title }}</h1>
     </div>
-    <span class="status-chip">{% if case.state == 'FORMAL' %}{{ tr('status.formal') }}{% elif case.state == 'CANDIDATE_REVIEW' %}{{ tr('status.candidate_review') }}{% else %}{{ tr('status.case_active') }}{% endif %}</span>
+    <span class="status-chip">{{ human_state(case.state) }}</span>
   </header>
 
   <aside class="readonly-banner">
     <strong>{{ tr('notice.requirement_baseline_read_only') }}</strong>
     <span>{{ tr('notice.case_discussion_append_only') }}</span>
   </aside>
+
+  <section class="action-panel stack" aria-labelledby="proposal-heading">
+    <p class="eyebrow">Next action</p><h2 id="proposal-heading">{{ ui('case_room', 'proposal_heading') }}</h2>
+    {% if formal_candidate %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/formal">{{ ui('case_room', 'open_confirmed', version_no=formal_candidate.version_no) }}</a></p>{% elif current_candidate %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/candidates/{{ current_candidate.id }}">{{ ui('case_room', 'open_confirmation', version_no=current_candidate.version_no) }}</a></p>{% elif editable and case_role == 'contractor' and case.state == 'JSON_B_PRIVATE_DRAFT' %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/json-b/draft">{{ ui('case_room', 'continue_revision') }}</a></p>{% elif primary_issue %}<p data-user-content>{{ primary_issue.summary }}</p><form method="post" action="/{{ locale }}/cases/{{ case.id }}/issues/{{ primary_issue.id }}/events" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ primary_issue.revision }}"><label>{{ tr('field.notes') }}<input name="note" maxlength="4000" required></label><div class="inline-actions">{% if primary_issue.kind == 'JSON_B_OBJECTION' and not primary_issue.proposal_artifact_current %}<button name="action" value="REQUEST_REVISION" data-ui="primary-action">{{ tr('action.request_revision') }}</button>{% elif primary_issue.state in ('OPEN', 'REVISION_REQUESTED') %}<button name="action" value="PROPOSE" data-ui="primary-action">{{ tr('action.propose_resolution') }}</button><button class="button-secondary" name="action" value="PROPOSE_OUT_OF_SCOPE">{{ tr('action.propose_out_of_scope') }}</button>{% elif primary_issue.state == 'PROPOSED' %}<button name="action" value="ACCEPT" data-ui="primary-action">{{ tr('action.accept_resolution') }}</button><button class="button-secondary" name="action" value="REQUEST_REVISION">{{ tr('action.request_revision') }}</button>{% else %}<button name="action" value="ACCEPT_OUT_OF_SCOPE" data-ui="primary-action">{{ tr('action.accept_out_of_scope') }}</button><button class="button-secondary" name="action" value="REQUEST_REVISION">{{ tr('action.request_revision') }}</button>{% endif %}</div></form>{% elif current_review %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ current_review.version_no }}">{{ ui('case_room', 'review_proposal', version_no=current_review.version_no) }}</a></p>{% elif editable and case_role == 'contractor' %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/json-b/draft">{{ ui('case_room', 'prepare_proposal') }}</a></p>{% else %}<p>{{ ui('case_room', 'no_proposal') }}</p>{% endif %}
+    {% if current_review and case.state == 'JSON_B_REVIEW' and primary_issue %}<p><a class="button button-secondary" href="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ current_review.version_no }}">{{ ui('proposal_review', 'revise') if case_role == 'contractor' else ui('case_room', 'review_proposal', version_no=current_review.version_no) }}</a></p>{% endif %}
+    {% if case_role == 'contractor' and case.state == 'CASE_ACTIVE' and primary_issue %}<p><a class="button button-secondary" href="/{{ locale }}/cases/{{ case.id }}/json-b/draft">{{ ui('case_room', 'prepare_proposal') }}</a></p>{% endif %}
+    <p class="muted">{{ ui('case_room', 'reload') }}</p>
+  </section>
 
   <section aria-labelledby="parties-heading">
     <h2 id="parties-heading">{{ tr('page.case_parties') }}</h2>
@@ -25,6 +41,19 @@
     </dl>
   </section>
 
+  <section class="stack" aria-labelledby="summary-heading">
+    <h2 id="summary-heading">{{ tr('page.requirement_summary') }}</h2>
+    <dl class="summary-list" data-user-content>
+      <div><dt>{{ tr('field.target_audience') }}</dt><dd>{{ requirement_summary.target_audience }}</dd></div>
+      <div><dt>{{ tr('field.primary_purpose') }}</dt><dd>{{ requirement_summary.primary_purpose }}</dd></div>
+      <div><dt>{{ tr('field.primary_visitor_action') }}</dt><dd>{{ requirement_summary.primary_visitor_action }}</dd></div>
+      <div><dt>{{ tr('field.unresolved_items') }}</dt><dd>{{ requirement_summary.unresolved_count }}</dd></div>
+    </dl>
+    <img class="blueprint blueprint-compact" src="{{ blueprint_url }}" alt="{{ tr('document.blueprint') }}">
+  </section>
+
+  <details class="technical-disclosure">
+    <summary>{{ ui('case_room', 'verify_requirement') }}</summary>
   <section class="data-panel stack" aria-labelledby="source-heading">
     <div class="section-heading">
       <div>
@@ -43,49 +72,36 @@
       <div><dt>{{ tr('field.verified_at') }}</dt><dd>{{ verification.verified_at }}</dd></div>
     </dl>
   </section>
+  </details>
 
-  <section class="stack" aria-labelledby="summary-heading">
-    <h2 id="summary-heading">{{ tr('page.requirement_summary') }}</h2>
-    <dl class="summary-list" data-user-content>
-      <div><dt>{{ tr('field.target_audience') }}</dt><dd>{{ requirement_summary.target_audience }}</dd></div>
-      <div><dt>{{ tr('field.primary_purpose') }}</dt><dd>{{ requirement_summary.primary_purpose }}</dd></div>
-      <div><dt>{{ tr('field.primary_visitor_action') }}</dt><dd>{{ requirement_summary.primary_visitor_action }}</dd></div>
-      <div><dt>{{ tr('field.unresolved_items') }}</dt><dd>{{ requirement_summary.unresolved_count }}</dd></div>
-    </dl>
-    <img class="blueprint" src="{{ blueprint_url }}" alt="{{ tr('document.blueprint') }}">
-  </section>
-
+  <details class="case-section-disclosure">
+    <summary><span id="discussion-heading">{{ tr('page.case_discussion') }}</span><small>{{ messages|length }} recorded</small></summary>
   <section class="stack" aria-labelledby="discussion-heading">
-    <h2 id="discussion-heading">{{ tr('page.case_discussion') }}</h2>
-    {% if messages %}<ol class="stack">{% for message in messages %}<li><strong data-user-content>{{ message.author_display_name }}</strong> · {{ message.author_role }} · {{ message.server_created_at }}{% if message.correction_of_id %} · {{ tr('status.correction') }}{% endif %}<p data-user-content>{{ message.body }}</p>{% if editable and message.author_role == case_role %}<details><summary>{{ tr('action.correct_message') }}</summary><form method="post" action="/{{ locale }}/cases/{{ case.id }}/messages" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ correction_idempotency_keys[message.id] }}"><input type="hidden" name="correction_of_id" value="{{ message.id }}"><label>{{ tr('field.message') }}<textarea name="body" required></textarea></label><button>{{ tr('action.add_correction') }}</button></form></details>{% endif %}</li>{% endfor %}</ol>{% else %}<p>{{ tr('notice.no_messages') }}</p>{% endif %}
+    {% if messages %}<ol class="stack">{% for message in messages %}<li><strong data-user-content>{{ message.author_display_name }}</strong> · {{ tr('role.owner') if message.author_role == 'client' else tr('role.contractor') }} · {{ message.server_created_at }}{% if message.correction_of_id %} · {{ tr('status.correction') }}{% endif %}<p data-user-content>{{ message.body }}</p>{% if editable and message.author_role == case_role %}<details><summary>{{ tr('action.correct_message') }}</summary><form method="post" action="/{{ locale }}/cases/{{ case.id }}/messages" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ correction_idempotency_keys[message.id] }}"><input type="hidden" name="correction_of_id" value="{{ message.id }}"><label>{{ tr('field.message') }}<textarea name="body" required></textarea></label><button class="button-secondary">{{ tr('action.add_correction') }}</button></form></details>{% endif %}</li>{% endfor %}</ol>{% else %}<p class="empty-state">{{ tr('notice.no_messages') }}</p>{% endif %}
     {% if editable %}
     <form method="post" action="/{{ locale }}/cases/{{ case.id }}/messages" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="idempotency_key" value="{{ message_idempotency_key }}">
       <label>{{ tr('field.message') }}<textarea name="body" required></textarea></label>
-      <button>{{ tr('action.add_message') }}</button>
+      <button class="button-secondary">{{ tr('action.add_message') }}</button>
     </form>
     {% endif %}
   </section>
+  </details>
 
+  <details class="case-section-disclosure">
+    <summary><span id="issues-heading">{{ tr('page.case_issues') }}</span><small>{{ issues|length }} recorded</small></summary>
   <section class="stack" aria-labelledby="issues-heading">
-    <h2 id="issues-heading">{{ tr('page.case_issues') }}</h2>
-    {% if issues %}<ul class="stack">{% for issue in issues %}<li><strong>{{ issue.state }}</strong> · {{ issue.kind }}<p data-user-content>{{ issue.summary }}</p>{% if issue.field_pointer %}<code>{{ issue.field_pointer }}</code>{% endif %}<details><summary>{{ tr('page.issue_history') }}</summary><ol>{% for event in issue_events if event.issue_id == issue.id %}<li><strong>{{ event.to_state }}</strong> · <span data-user-content>{{ event.actor_display_name }}</span> · {{ event.server_created_at }}{% if event.note %}<p data-user-content>{{ event.note }}</p>{% endif %}</li>{% endfor %}</ol></details>{% set can_respond = issue.proposal_role != case_role %}{% if editable and (issue.state in ('OPEN', 'REVISION_REQUESTED') or (issue.state in ('PROPOSED', 'OUT_OF_SCOPE_PROPOSED') and can_respond)) %}<form method="post" action="/{{ locale }}/cases/{{ case.id }}/issues/{{ issue.id }}/events" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="expected_revision" value="{{ issue.revision }}"><select name="action">{% if issue.state in ('OPEN', 'REVISION_REQUESTED') %}<option value="PROPOSE">{{ tr('action.propose_resolution') }}</option><option value="PROPOSE_OUT_OF_SCOPE">{{ tr('action.propose_out_of_scope') }}</option>{% elif issue.state == 'PROPOSED' %}<option value="REQUEST_REVISION">{{ tr('action.request_revision') }}</option><option value="ACCEPT">{{ tr('action.accept_resolution') }}</option>{% elif issue.state == 'OUT_OF_SCOPE_PROPOSED' %}<option value="REQUEST_REVISION">{{ tr('action.request_revision') }}</option><option value="ACCEPT_OUT_OF_SCOPE">{{ tr('action.accept_out_of_scope') }}</option>{% endif %}</select><input name="note" maxlength="4000" aria-label="{{ tr('field.notes') }}"><button>{{ tr('action.update_issue') }}</button></form>{% endif %}</li>{% endfor %}</ul>{% else %}<p>{{ tr('notice.no_issues') }}</p>{% endif %}
+    {% if issues %}<ul class="stack">{% for issue in issues %}<li id="issue-{{ issue.id }}"><strong>{{ human_issue_state(issue.state) }}</strong> · {{ human_issue_kind(issue.kind) }}<p data-user-content>{{ issue.summary }}</p><details><summary>{{ tr('page.issue_history') }}</summary><ol>{% for event in issue_events if event.issue_id == issue.id %}<li><strong>{{ human_issue_state(event.to_state) }}</strong> · <span data-user-content>{{ event.actor_display_name }}</span> · {{ event.server_created_at }}{% if event.note %}<p data-user-content>{{ event.note }}</p>{% endif %}</li>{% endfor %}</ol></details></li>{% endfor %}</ul>{% else %}<p class="empty-state">{{ tr('notice.no_issues') }}</p>{% endif %}
     {% if editable %}
     <form method="post" action="/{{ locale }}/cases/{{ case.id }}/issues" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>{{ tr('field.issue_summary') }}<textarea name="summary" required></textarea></label>
-      <button>{{ tr('action.open_issue') }}</button>
+      <button class="button-secondary">{{ tr('action.open_issue') }}</button>
     </form>
     {% endif %}
   </section>
+  </details>
 
-  <section class="data-panel stack" aria-labelledby="json-b-heading">
-    <h2 id="json-b-heading">{{ tr('document.json_b') }}</h2>
-    {% if current_review %}<p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ current_review.version_no }}">{{ tr('action.review_json_b') }} {{ current_review.version_no }}</a></p>{% else %}<p>{{ tr('notice.no_json_b_review') }}</p>{% endif %}
-    {% if editable and case_role == 'contractor' %}<p><a class="button button-secondary" href="/{{ locale }}/cases/{{ case.id }}/json-b/draft">{{ tr('action.open_json_b_draft') }}</a></p>{% endif %}
-    {% if current_candidate %}<p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/candidates/{{ current_candidate.id }}">{{ tr('action.open_candidate') }} {{ current_candidate.version_no }}</a></p>{% endif %}
-    {% if formal_candidate %}<p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/formal">{{ tr('action.open_formal_verification') }} {{ formal_candidate.version_no }}</a></p>{% endif %}
-  </section>
 </section>
 {% endblock %}

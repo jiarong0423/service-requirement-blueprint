@@ -10,8 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from app.db import immediate_transaction
-from app.services.artifact_store import ArtifactStoreError, read_verified
+from app.db import deferred_read_transaction, immediate_transaction
+from app.services.artifact_store import ArtifactStoreError, MAX_JSON_ARTIFACT_BYTES, read_verified
 from app.services.json_contracts import JsonContractError, decode_strict_json, sha256_bytes, validate_json_a
 
 
@@ -138,7 +138,10 @@ def _verify_exact_source(
 ) -> dict[str, Any]:
     checked_document = document if document is not None else _validated_document(raw, schema_path)
     try:
-        stored = read_verified(data_root, source["relative_path"], source["sha256"])
+        stored = read_verified(
+            data_root, source["relative_path"], source["sha256"], source["byte_length"],
+            max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
     except (ArtifactStoreError, OSError, ValueError) as error:
         raise InvitationWorkflowError("source_artifact_invalid") from error
     supplied_digest = sha256_bytes(raw)
@@ -412,29 +415,52 @@ def accept_invitation(
     now_text = _utc_text(current_time)
     outcome: str | None = None
     preview: InvitationPreview | None = None
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         invitation = _token_invitation(connection, invitation_id, code, designated_user_id)
         if invitation is None or invitation["state"] != "pending" or invitation["source_invalidated_at"] is not None:
             raise InvitationWorkflowError("invitation_unavailable")
-        if current_time >= _parse_utc(invitation["expires_at"]):
-            _mark_expired(connection, invitation, now_text)
-            outcome = "invitation_expired"
-        else:
+        invitation_token = tuple(invitation)
+        source = None
+        source_token = None
+        if current_time < _parse_utc(invitation["expires_at"]):
             source = _current_source(connection, invitation["case_id"])
+            source_token = tuple(source)
             if (
-                invitation["case_state"] != "INVITATION_PENDING"
-                or invitation["contractor_id"] is not None
-                or not _source_matches_invitation(source, invitation)
+                invitation["case_state"] == "INVITATION_PENDING"
+                and invitation["contractor_id"] is None
+                and _source_matches_invitation(source, invitation)
             ):
-                _mark_stale_pending(connection, invitation, now_text)
-                outcome = "invitation_unavailable"
-            else:
                 try:
-                    stored = read_verified(data_root, source["relative_path"], source["sha256"])
+                    read_verified(
+                        data_root, source["relative_path"], source["sha256"], source["byte_length"],
+                        max_bytes=MAX_JSON_ARTIFACT_BYTES,
+                    )
                 except (ArtifactStoreError, OSError, ValueError) as error:
                     raise InvitationWorkflowError("source_artifact_invalid") from error
-                if len(stored) != source["byte_length"]:
-                    raise InvitationWorkflowError("source_artifact_invalid")
+    with immediate_transaction(connection):
+        locked_invitation = _token_invitation(connection, invitation_id, code, designated_user_id)
+        if (
+            locked_invitation is None
+            or tuple(locked_invitation) != invitation_token
+            or locked_invitation["state"] != "pending"
+            or locked_invitation["source_invalidated_at"] is not None
+        ):
+            raise InvitationWorkflowError("invitation_unavailable")
+        if current_time >= _parse_utc(locked_invitation["expires_at"]):
+            _mark_expired(connection, locked_invitation, now_text)
+            outcome = "invitation_expired"
+        else:
+            locked_source = _current_source(connection, locked_invitation["case_id"])
+            if (
+                source_token is None
+                or tuple(locked_source) != source_token
+                or locked_invitation["case_state"] != "INVITATION_PENDING"
+                or locked_invitation["contractor_id"] is not None
+                or not _source_matches_invitation(locked_source, locked_invitation)
+            ):
+                _mark_stale_pending(connection, locked_invitation, now_text)
+                outcome = "invitation_unavailable"
+            else:
                 accepted = connection.execute(
                     "UPDATE invitations SET state = 'accepted', accepted_at = ?, updated_at = ? "
                     "WHERE id = ? AND state = 'pending'",
@@ -443,18 +469,18 @@ def accept_invitation(
                 bound = connection.execute(
                     "UPDATE cases SET contractor_id = ?, state = 'WAITING_JSON_A_IMPORT', updated_at = ? "
                     "WHERE id = ? AND state = 'INVITATION_PENDING' AND contractor_id IS NULL",
-                    (designated_user_id, now_text, invitation["case_id"]),
+                    (designated_user_id, now_text, locked_invitation["case_id"]),
                 )
                 if accepted.rowcount != 1 or bound.rowcount != 1:
                     raise InvitationWorkflowError("invitation_unavailable")
                 preview = InvitationPreview(
-                    invitation["id"],
-                    invitation["case_id"],
-                    invitation["case_title"],
-                    invitation["owner_display_name"],
-                    invitation["source_version_no"],
-                    invitation["source_sha256"],
-                    invitation["expires_at"],
+                    locked_invitation["id"],
+                    locked_invitation["case_id"],
+                    locked_invitation["case_title"],
+                    locked_invitation["owner_display_name"],
+                    locked_invitation["source_version_no"],
+                    locked_invitation["source_sha256"],
+                    locked_invitation["expires_at"],
                 )
     if outcome is not None:
         raise InvitationWorkflowError(outcome)
@@ -538,6 +564,64 @@ def revoke_invitation(
             )
     if outcome is not None:
         raise InvitationWorkflowError(outcome)
+
+
+def cancel_accepted_invitation_before_import(
+    connection: sqlite3.Connection,
+    case_id: str,
+    invitation_id: str,
+    owner_id: str,
+    *,
+    now: datetime | None = None,
+) -> None:
+    now_text = _utc_text(_utc_now(now))
+    with immediate_transaction(connection):
+        invitation = connection.execute(
+            "SELECT i.*, c.state AS case_state, c.contractor_id, "
+            "c.current_json_a_artifact_id, c.content_revision "
+            "FROM invitations AS i JOIN cases AS c ON c.id = i.case_id "
+            "JOIN users AS owner ON owner.id = i.owner_id "
+            "WHERE i.id = ? AND i.case_id = ? AND i.owner_id = ? "
+            "AND owner.status = 'active' AND owner.system_role = 'member'",
+            (invitation_id, case_id, owner_id),
+        ).fetchone()
+        if (
+            invitation is None
+            or invitation["state"] != "accepted"
+            or invitation["source_invalidated_at"] is not None
+            or invitation["case_state"] != "WAITING_JSON_A_IMPORT"
+            or invitation["contractor_id"] != invitation["designated_user_id"]
+            or invitation["current_json_a_artifact_id"] != invitation["source_artifact_id"]
+            or invitation["content_revision"] != invitation["source_content_revision"]
+            or connection.execute(
+                "SELECT 1 FROM json_a_source_verifications "
+                "WHERE invitation_id = ? AND actor_role = 'contractor'",
+                (invitation_id,),
+            ).fetchone() is not None
+        ):
+            raise InvitationWorkflowError("invitation_unavailable")
+        invalidated = connection.execute(
+            "UPDATE invitations SET source_invalidated_at = ?, "
+            "source_invalidation_reason = 'owner_cancelled_before_import', updated_at = ? "
+            "WHERE id = ? AND case_id = ? AND owner_id = ? "
+            "AND state = 'accepted' AND source_invalidated_at IS NULL",
+            (now_text, now_text, invitation_id, case_id, owner_id),
+        )
+        released = connection.execute(
+            "UPDATE cases SET state = 'REQUIREMENT_DRAFT', contractor_id = NULL, updated_at = ? "
+            "WHERE id = ? AND owner_id = ? AND state = 'WAITING_JSON_A_IMPORT' "
+            "AND contractor_id = ? AND current_json_a_artifact_id = ? AND content_revision = ?",
+            (
+                now_text,
+                case_id,
+                owner_id,
+                invitation["designated_user_id"],
+                invitation["source_artifact_id"],
+                invitation["source_content_revision"],
+            ),
+        )
+        if invalidated.rowcount != 1 or released.rowcount != 1:
+            raise InvitationWorkflowError("workflow_state_invalid")
 
 
 def import_json_a(

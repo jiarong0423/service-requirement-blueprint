@@ -11,9 +11,12 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from app.db import immediate_transaction
+from app.db import deferred_read_transaction, immediate_transaction
 from app.services.artifact_store import (
     ArtifactStoreError,
+    MAX_CANDIDATE_BINARY_BYTES,
+    MAX_CANDIDATE_MANIFEST_BYTES,
+    MAX_JSON_ARTIFACT_BYTES,
     _ensure_private_directory,
     _fsync_directory,
     _rename_directory_no_replace,
@@ -75,9 +78,13 @@ def _read_document(
     validator,
 ) -> tuple[dict[str, object], bytes]:
     try:
-        raw = read_verified(data_root, row["relative_path"], row["sha256"])
-        if len(raw) != row["byte_length"]:
-            raise ArtifactStoreError("length_mismatch")
+        raw = read_verified(
+            data_root,
+            row["relative_path"],
+            row["sha256"],
+            row["byte_length"],
+            max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
         document = decode_strict_json(raw)
         if not isinstance(document, dict):
             raise JsonContractError("schema_validation_failed")
@@ -87,14 +94,11 @@ def _read_document(
     return document, raw
 
 
-def _current_sources(
+def _current_source_rows(
     connection: sqlite3.Connection,
-    data_root: Path,
-    json_a_schema: Path,
-    json_b_schema: Path,
     case_id: str,
     actor_id: str,
-) -> tuple[sqlite3.Row, SourceSnapshot, SourceSnapshot]:
+) -> tuple[sqlite3.Row, sqlite3.Row, sqlite3.Row]:
     actor = connection.execute(
         "SELECT status, system_role FROM users WHERE id = ?", (actor_id,)
     ).fetchone()
@@ -149,6 +153,18 @@ def _current_sources(
         raise CandidateWorkflowError("source_mismatch")
     if _parse_time(json_b_row["quote_expires_at"]) <= datetime.now(timezone.utc):
         raise CandidateWorkflowError("quote_expired")
+    return case, json_a_row, json_b_row
+
+
+def _current_sources(
+    connection: sqlite3.Connection,
+    data_root: Path,
+    json_a_schema: Path,
+    json_b_schema: Path,
+    case_id: str,
+    actor_id: str,
+) -> tuple[sqlite3.Row, SourceSnapshot, SourceSnapshot]:
+    case, json_a_row, json_b_row = _current_source_rows(connection, case_id, actor_id)
 
     json_a_document, json_a_raw = _read_document(data_root, json_a_row, json_a_schema, validate_json_a)
     json_b_document, json_b_raw = _read_document(data_root, json_b_row, json_b_schema, validate_json_b)
@@ -175,6 +191,27 @@ def _current_sources(
             raw=json_b_raw, document=json_b_document,
         ),
     )
+
+
+def _assert_current_sources_unchanged(
+    connection: sqlite3.Connection,
+    case_id: str,
+    actor_id: str,
+    expected_case: sqlite3.Row,
+    expected_json_a: SourceSnapshot,
+    expected_json_b: SourceSnapshot,
+) -> None:
+    current_case, current_a, current_b = _current_source_rows(connection, case_id, actor_id)
+    if (
+        current_case["content_revision"] != expected_case["content_revision"]
+        or current_case["current_json_a_artifact_id"] != expected_json_a.artifact_id
+        or current_case["current_json_b_artifact_id"] != expected_json_b.artifact_id
+        or (current_a["id"], current_a["document_id"], current_a["version_no"], current_a["schema_version"], current_a["sha256"], current_a["byte_length"])
+        != (expected_json_a.artifact_id, expected_json_a.document_id, expected_json_a.version, expected_json_a.schema_version, expected_json_a.sha256, expected_json_a.byte_length)
+        or (current_b["id"], current_b["document_id"], current_b["version_no"], current_b["schema_version"], current_b["sha256"], current_b["byte_length"])
+        != (expected_json_b.artifact_id, expected_json_b.document_id, expected_json_b.version, expected_json_b.schema_version, expected_json_b.sha256, expected_json_b.byte_length)
+    ):
+        raise CandidateWorkflowError("candidate_source_changed")
 
 
 def _validate_manifest(raw: bytes, schema_path: Path) -> dict[str, object]:
@@ -314,9 +351,10 @@ def create_candidate(
     if already_active is not None:
         _load_verified_bundle(connection, data_root, case_id, already_active["id"], assets=assets)
         return CandidateResult(already_active["id"], already_active["version_no"], False)
-    case, json_a, json_b = _current_sources(
-        connection, data_root, json_a_schema, json_b_schema, case_id, actor_id
-    )
+    with deferred_read_transaction(connection):
+        case, json_a, json_b = _current_sources(
+            connection, data_root, json_a_schema, json_b_schema, case_id, actor_id
+        )
     existing = _existing_current(connection, case_id, json_a, json_b, assets)
     if existing is not None:
         _load_verified_bundle(connection, data_root, case_id, existing["id"], assets=assets)
@@ -342,6 +380,11 @@ def create_candidate(
         raise CandidateWorkflowError("candidate_build_failed") from error
 
     artifact_ids = {name: str(uuid.uuid4()) for name in ("manifest", "pdf", "svg")}
+    artifact_contracts = {
+        "manifest": (hashlib.sha256(bundle.manifest).hexdigest(), len(bundle.manifest)),
+        "pdf": (hashlib.sha256(bundle.pdf).hexdigest(), len(bundle.pdf)),
+        "svg": (hashlib.sha256(bundle.svg).hexdigest(), len(bundle.svg)),
+    }
     created = False
     try:
         with immediate_transaction(connection):
@@ -359,29 +402,21 @@ def create_candidate(
                     raise CandidateWorkflowError("candidate_source_changed")
                 result = CandidateResult(concurrent["id"], concurrent["version_no"], False)
             else:
-                locked_case, locked_a, locked_b = _current_sources(
-                    connection, data_root, json_a_schema, json_b_schema, case_id, actor_id
+                _assert_current_sources_unchanged(
+                    connection, case_id, actor_id, case, json_a, json_b
                 )
-                if (
-                    locked_case["content_revision"] != case["content_revision"]
-                    or locked_a.artifact_id != json_a.artifact_id
-                    or locked_a.sha256 != json_a.sha256
-                    or locked_b.artifact_id != json_b.artifact_id
-                    or locked_b.sha256 != json_b.sha256
-                ):
-                    raise CandidateWorkflowError("candidate_source_changed")
                 now = snapshot.created_at
                 rows = (
-                    (artifact_ids["manifest"], "candidate_manifest", "manifest.json", "candidate-manifest/1.0", bundle.manifest),
-                    (artifact_ids["pdf"], "candidate_pdf", "document.pdf", TEMPLATE_VERSION, bundle.pdf),
-                    (artifact_ids["svg"], "candidate_svg", "diagram.svg", TEMPLATE_VERSION, bundle.svg),
+                    (artifact_ids["manifest"], "candidate_manifest", "manifest.json", "candidate-manifest/1.0", artifact_contracts["manifest"]),
+                    (artifact_ids["pdf"], "candidate_pdf", "document.pdf", TEMPLATE_VERSION, artifact_contracts["pdf"]),
+                    (artifact_ids["svg"], "candidate_svg", "diagram.svg", TEMPLATE_VERSION, artifact_contracts["svg"]),
                 )
-                for artifact_id, kind, filename, schema_version, raw in rows:
+                for artifact_id, kind, filename, schema_version, contract in rows:
                     connection.execute(
                         "INSERT INTO artifacts(id, case_id, author_id, kind, version_no, visibility, lifecycle, "
                         "relative_path, sha256, byte_length, schema_version, created_at) "
                         "VALUES (?, ?, ?, ?, ?, 'party_only', 'active', ?, ?, ?, ?, ?)",
-                        (artifact_id, case_id, actor_id, kind, version, f"{relative_directory}/{filename}", hashlib.sha256(raw).hexdigest(), len(raw), schema_version, now),
+                        (artifact_id, case_id, actor_id, kind, version, f"{relative_directory}/{filename}", contract[0], contract[1], schema_version, now),
                     )
                 connection.execute(
                     "INSERT INTO candidate_versions(id, case_id, version_no, created_by_id, state, "
@@ -406,9 +441,9 @@ def create_candidate(
                         candidate_id,
                         case_id,
                         candidate_id,
-                        hashlib.sha256(bundle.manifest).hexdigest(),
-                        hashlib.sha256(bundle.pdf).hexdigest(),
-                        hashlib.sha256(bundle.svg).hexdigest(),
+                        artifact_contracts["manifest"][0],
+                        artifact_contracts["pdf"][0],
+                        artifact_contracts["svg"][0],
                         json_a.sha256,
                         json_b.sha256,
                         now,
@@ -563,9 +598,9 @@ def _load_verified_bundle(
             data_root,
             directory,
             {
-                "manifest.json": (row["manifest_sha256"], row["manifest_length"]),
-                "document.pdf": (row["pdf_sha256"], row["pdf_length"]),
-                "diagram.svg": (row["svg_sha256"], row["svg_length"]),
+                "manifest.json": (row["manifest_sha256"], row["manifest_length"], MAX_CANDIDATE_MANIFEST_BYTES),
+                "document.pdf": (row["pdf_sha256"], row["pdf_length"], MAX_CANDIDATE_BINARY_BYTES),
+                "diagram.svg": (row["svg_sha256"], row["svg_length"], MAX_CANDIDATE_BINARY_BYTES),
             },
         )
         manifest = _validate_manifest(files["manifest.json"], MANIFEST_SCHEMA_PATH)
@@ -607,13 +642,6 @@ def _load_verified_bundle(
         "pdf": {"filename": "document.pdf", "media_type": "application/pdf", "sha256": row["pdf_sha256"], "byte_length": row["pdf_length"]},
         "svg": {"filename": "diagram.svg", "media_type": "image/svg+xml", "sha256": row["svg_sha256"], "byte_length": row["svg_length"]},
     }
-    assets_match = True
-    if assets is not None and row["state"] == "CURRENT":
-        assets_match = (
-            manifest.get("catalog") == {"locale": "en", **_expected_asset_record(assets.catalog_record)}
-            and manifest.get("label_map") == {"schema_version": "candidate-label-map/1.0", **_expected_asset_record(assets.label_record)}
-            and manifest.get("fonts") == {key: _expected_asset_record(record) for key, record in assets.font_records.items()}
-        )
     if (
         source_a is None
         or source_b is None
@@ -641,7 +669,6 @@ def _load_verified_bundle(
         or manifest.get("template_version") != row["template_version"]
         or manifest.get("catalog", {}).get("sha256") != row["catalog_sha256"]
         or manifest.get("label_map", {}).get("sha256") != row["label_map_sha256"]
-        or not assets_match
     ):
         raise CandidateWorkflowError("candidate_integrity_invalid")
     return row, files
@@ -684,7 +711,7 @@ def reconcile_candidate_storage(
         (row["case_id"], row["id"]): row["state"]
         for row in connection.execute(
             "SELECT case_id, id, state FROM candidate_versions "
-            "WHERE state IN ('CURRENT', 'INVALIDATED', 'FORMAL')"
+            "WHERE state IN ('CURRENT', 'INVALIDATED', 'FORMAL', 'SUPERSEDED')"
         )
     }
     pointer_cases = {
@@ -742,5 +769,41 @@ def reconcile_candidate_storage(
                     )
                     _fsync_directory(candidates)
                     _fsync_directory(quarantine)
-    for case_id, candidate_id in known:
-        _load_verified_bundle(connection, data_root, case_id, candidate_id, assets=assets)
+    for (case_id, candidate_id), state in candidate_rows.items():
+        if state == "SUPERSEDED":
+            candidate = connection.execute(
+                "SELECT created_by_id, version_no, manifest_artifact_id, pdf_artifact_id, svg_artifact_id "
+                "FROM candidate_versions WHERE case_id = ? AND id = ? AND state = 'SUPERSEDED'",
+                (case_id, candidate_id),
+            ).fetchone()
+            if candidate is None:
+                raise CandidateWorkflowError("candidate_database_invalid")
+            directory = f"cases/{case_id}/candidates/{candidate_id}"
+            expected = {}
+            for filename, column, kind, limit in (
+                ("manifest.json", "manifest_artifact_id", "candidate_manifest", MAX_CANDIDATE_MANIFEST_BYTES),
+                ("document.pdf", "pdf_artifact_id", "candidate_pdf", MAX_CANDIDATE_BINARY_BYTES),
+                ("diagram.svg", "svg_artifact_id", "candidate_svg", MAX_CANDIDATE_BINARY_BYTES),
+            ):
+                artifact = connection.execute(
+                    "SELECT case_id, author_id, version_no, kind, visibility, relative_path, sha256, byte_length "
+                    "FROM artifacts WHERE id = ?",
+                    (candidate[column],),
+                ).fetchone()
+                if (
+                    artifact is None
+                    or artifact["case_id"] != case_id
+                    or artifact["author_id"] != candidate["created_by_id"]
+                    or artifact["version_no"] != candidate["version_no"]
+                    or artifact["kind"] != kind
+                    or artifact["visibility"] != "party_only"
+                    or artifact["relative_path"] != f"{directory}/{filename}"
+                ):
+                    raise CandidateWorkflowError("candidate_database_invalid")
+                expected[filename] = (artifact["sha256"], artifact["byte_length"], limit)
+            try:
+                verify_candidate_bundle(data_root, directory, expected)
+            except (ArtifactStoreError, OSError) as error:
+                raise CandidateWorkflowError("candidate_integrity_invalid") from error
+        else:
+            _load_verified_bundle(connection, data_root, case_id, candidate_id, assets=assets)

@@ -1,6 +1,6 @@
 # Security Threat Model
 
-Review date: 2026-10-07  
+Review date: 2026-10-11  
 System boundary: local Flask PoC bound to loopback, with SQLite and controlled local artifact storage
 
 ## Assets

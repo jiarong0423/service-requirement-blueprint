@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import stat
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 import app.cli as cli_module
+import app.security.auth as auth_module
 from app.cli import initialize_demo
 from app.config import build_config
 from app.db import connect_database
@@ -110,6 +112,21 @@ def test_login_logout_rotate_identity_and_csrf(demo_runtime) -> None:
             assert state["csrf_nonce"] != authenticated_nonce
 
 
+def test_logout_revokes_a_replayed_signed_session_cookie(demo_runtime) -> None:
+    app, _instance_root, passwords = demo_runtime
+    cookie_name = app.config["SESSION_COOKIE_NAME"]
+    with app.test_client() as client:
+        assert login(client, "en", "owner@example.test", passwords["owner"]).status_code == 302
+        signed_cookie = client.get_cookie(cookie_name)
+        assert signed_cookie is not None
+        authenticated_nonce = csrf(client)
+        assert client.post("/en/logout", data={"csrf_token": authenticated_nonce}).status_code == 302
+
+    with app.test_client() as replay:
+        replay.set_cookie(cookie_name, signed_cookie.value)
+        assert replay.get("/en/account").status_code == 401
+
+
 def test_login_errors_are_generic_and_mutation_requires_csrf(demo_runtime) -> None:
     app, _instance_root, passwords = demo_runtime
     with app.test_client() as client:
@@ -120,6 +137,92 @@ def test_login_errors_are_generic_and_mutation_requires_csrf(demo_runtime) -> No
         assert first.status_code == second.status_code == 401
         assert b"Invalid sign-in information" in first.data and b"Invalid sign-in information" in second.data
         assert client.post("/en/login", data={"email": "owner@example.test", "password": passwords["owner"]}).status_code == 400
+
+
+def test_protected_post_distinguishes_expired_identity_from_invalid_csrf(demo_runtime) -> None:
+    app, instance_root, passwords = demo_runtime
+    with app.test_client() as anonymous:
+        response = anonymous.post("/en/owner/requirements", data={"title": "Draft"})
+        assert response.status_code == 401
+        assert b"session" in response.data.lower()
+        assert anonymous.post("/en/login", data={"email": "owner@example.test"}).status_code == 400
+
+    with app.test_client() as client:
+        assert login(client, "en", "owner@example.test", passwords["owner"]).status_code == 302
+        assert client.post("/en/owner/requirements", data={"title": "Draft"}).status_code == 400
+        connection = connect_database(instance_root / "app.sqlite3")
+        try:
+            connection.execute(
+                "UPDATE users SET session_version = session_version + 1 WHERE email_normalized = 'owner@example.test'"
+            )
+        finally:
+            connection.close()
+        revoked = client.post("/en/owner/requirements", data={"title": "Draft"})
+        assert revoked.status_code == 401
+        assert b"session" in revoked.data.lower()
+
+    with app.test_client() as expired:
+        assert login(expired, "en", "owner@example.test", passwords["owner"]).status_code == 302
+        app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(seconds=-1)
+        response = expired.post("/en/owner/requirements", data={"title": "Draft"})
+        assert response.status_code == 401
+        assert b"session" in response.data.lower()
+
+
+def test_kdf_capacity_busy_is_uniform_service_unavailable(demo_runtime) -> None:
+    app, _instance_root, passwords = demo_runtime
+    acquired = 0
+    try:
+        for _ in range(auth_module.KDF_CONCURRENCY_LIMIT):
+            assert auth_module._KDF_SLOTS.acquire(blocking=False)
+            acquired += 1
+        responses = []
+        for email in ("owner@example.test", "missing@example.test"):
+            with app.test_client() as client:
+                client.get("/en/login")
+                responses.append(client.post(
+                    "/en/login",
+                    data={
+                        "csrf_token": csrf(client),
+                        "email": email,
+                        "password": passwords["owner"],
+                    },
+                ))
+    finally:
+        for _ in range(acquired):
+            auth_module._KDF_SLOTS.release()
+
+    assert [response.status_code for response in responses] == [503, 503]
+    assert [response.headers["Retry-After"] for response in responses] == ["1", "1"]
+    assert [response.headers["Cache-Control"] for response in responses] == ["no-store", "no-store"]
+    for response in responses:
+        assert b"Sign-in is temporarily unavailable" in response.data
+        assert b"Invalid sign-in information" not in response.data
+
+
+def test_password_verification_preserves_valid_invalid_and_memory_busy(
+    demo_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _app, instance_root, passwords = demo_runtime
+    connection = connect_database(instance_root / "app.sqlite3")
+    try:
+        stored_hash = connection.execute(
+            "SELECT password_hash FROM users WHERE email_normalized = 'owner@example.test'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert auth_module.verify_password(stored_hash, passwords["owner"]) is auth_module.PasswordVerification.VALID
+    assert auth_module.verify_password(stored_hash, "wrong-password") is auth_module.PasswordVerification.INVALID
+    assert auth_module.verify_password(None, passwords["owner"]) is auth_module.PasswordVerification.INVALID
+
+    def raise_memory_error(_stored_hash: str, _candidate: str) -> bool:
+        raise MemoryError
+
+    monkeypatch.setattr(auth_module, "check_password_hash", raise_memory_error)
+    assert auth_module.verify_password(stored_hash, passwords["owner"]) is auth_module.PasswordVerification.BUSY
+    assert auth_module._KDF_SLOTS.acquire(blocking=False)
+    auth_module._KDF_SLOTS.release()
 
 
 def test_stale_session_version_is_rejected_on_next_request(demo_runtime) -> None:

@@ -4,6 +4,7 @@ import hashlib
 import html
 import io
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,7 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate
 
 from app.services.document_integrity import (
     DocumentAssets,
@@ -23,11 +24,21 @@ from app.services.document_integrity import (
     validate_candidate_pdf,
     validate_safe_svg,
 )
+from app.presentation_semantics import HIDDEN_PRESENTATION_FIELDS, human_scalar
 
 
 MANIFEST_SCHEMA_VERSION = "candidate-manifest/1.0"
-TEMPLATE_VERSION = "candidate-document/1.1"
+TEMPLATE_VERSION = "candidate-document/1.4"
 
+MACHINE_ONLY_DOCUMENT_FIELDS = frozenset({
+    "schema_version",
+    "document_type",
+    "document_id",
+    "version",
+    "generated_at",
+    "case_id",
+    "source_json_a",
+})
 
 @dataclass(frozen=True)
 class SourceSnapshot:
@@ -315,6 +326,153 @@ def _blueprint_drawing(model: DiagramModel, assets: DocumentAssets) -> Drawing:
     return drawing
 
 
+def _human_document_lines(
+    value: object,
+    assets: DocumentAssets,
+    depth: int = 0,
+    field_key: str | None = None,
+    *,
+    contractor_authored: bool = False,
+) -> list[str]:
+    prefix = "  " * depth
+    if isinstance(value, dict):
+        lines: list[str] = []
+        for key, item in value.items():
+            if (
+                key.endswith("_id")
+                or key in MACHINE_ONLY_DOCUMENT_FIELDS
+                or key in HIDDEN_PRESENTATION_FIELDS
+            ):
+                continue
+            labels = assets.labels.get("fields", {})
+            mapped = labels.get(key) if isinstance(labels, dict) else None
+            label = mapped if isinstance(mapped, str) and mapped else key.replace("_", " ").title()
+            nested = _human_document_lines(
+                item,
+                assets,
+                depth + 1,
+                key,
+                contractor_authored=contractor_authored,
+            )
+            if not nested:
+                lines.append(f"{prefix}{label}: None")
+            elif len(nested) == 1 and not isinstance(item, (dict, list)):
+                lines.append(f"{prefix}{label}: {nested[0].strip()}")
+            else:
+                lines.append(f"{prefix}{label}")
+                lines.extend(nested)
+        return lines
+    if isinstance(value, list):
+        if not value:
+            return [f"{prefix}None"]
+        lines = []
+        for item in value:
+            nested = _human_document_lines(
+                item,
+                assets,
+                depth + 1,
+                field_key,
+                contractor_authored=contractor_authored,
+            )
+            if len(nested) == 1:
+                lines.append(f"{prefix}• {nested[0].strip()}")
+            else:
+                lines.append(f"{prefix}•")
+                lines.extend(nested)
+        return lines
+    if value is True:
+        return [f"{prefix}Yes"]
+    if value is False:
+        return [f"{prefix}No"]
+    if value is None:
+        return [f"{prefix}Not applicable"]
+    return [
+        f"{prefix}{human_scalar(field_key, value, contractor_authored=contractor_authored)}"
+    ]
+
+
+def _open_item_lines(document: dict[str, Any], assets: DocumentAssets) -> list[str]:
+    items = document.get("open_items")
+    if not isinstance(items, list):
+        raise DocumentIntegrityError("open_items_invalid")
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {"section_code", "field_pointer", "resolution", "note"}:
+            raise DocumentIntegrityError("open_item_invalid")
+        section = item["section_code"]
+        pointer = item["field_pointer"]
+        resolution = item["resolution"]
+        note = item["note"]
+        if (
+            not isinstance(section, str)
+            or not isinstance(pointer, str)
+            or not isinstance(resolution, str)
+            or not isinstance(note, str)
+            or (section, pointer) in seen
+        ):
+            raise DocumentIntegrityError("open_item_invalid")
+        seen.add((section, pointer))
+        source = document.get(section)
+        if not isinstance(source, dict):
+            raise DocumentIntegrityError("open_item_pointer_invalid")
+        if section == "delivery_and_constraints":
+            if (
+                pointer != "/budget_status"
+                or source.get("budget_status") != resolution
+                or resolution not in ("undecided", "contractor_proposal_requested")
+            ):
+                raise DocumentIntegrityError("open_item_pointer_mismatch")
+            catalog_key = "field.budget_status"
+        else:
+            if section == "features":
+                match = re.fullmatch(r"/items/(0|[1-9][0-9]*)/requirement_level", pointer)
+                collection, code_key, label_prefix = "items", "feature_code", "feature"
+            elif section == "external_services_and_assets":
+                match = re.fullmatch(r"/(services|assets)/(0|[1-9][0-9]*)/status", pointer)
+                collection = match.group(1) if match else ""
+                code_key = "service_code" if collection == "services" else "asset_code"
+                label_prefix = "service" if collection == "services" else "asset"
+            else:
+                raise DocumentIntegrityError("open_item_pointer_invalid")
+            if match is None:
+                raise DocumentIntegrityError("open_item_pointer_invalid")
+            entries = source.get(collection)
+            if not isinstance(entries, list) or not entries:
+                raise DocumentIntegrityError("open_item_pointer_invalid")
+            index_text = match.group(1) if section == "features" else match.group(2)
+            maximum_text = str(len(entries) - 1)
+            if len(index_text) > len(maximum_text) or (
+                len(index_text) == len(maximum_text) and index_text > maximum_text
+            ):
+                raise DocumentIntegrityError("open_item_pointer_invalid")
+            index = int(index_text)
+            if not isinstance(entries[index], dict):
+                raise DocumentIntegrityError("open_item_pointer_invalid")
+            entry = entries[index]
+            value = entry.get("requirement_level" if section == "features" else "status")
+            if not isinstance(value, str):
+                raise DocumentIntegrityError("open_item_pointer_mismatch")
+            if section == "features":
+                expected_resolution = "undecided" if value == "undecided" else None
+            else:
+                expected_resolution = {
+                    "to_select": "undecided",
+                    "contractor_proposal": "contractor_proposal_requested",
+                }.get(value)
+            if expected_resolution != resolution:
+                raise DocumentIntegrityError("open_item_pointer_mismatch")
+            code = entry.get(code_key)
+            if not isinstance(code, str):
+                raise DocumentIntegrityError("open_item_label_missing")
+            catalog_key = f"{label_prefix}.{code}"
+        label = assets.catalog.get(catalog_key)
+        if not isinstance(label, str) or not label:
+            raise DocumentIntegrityError("open_item_label_missing")
+        lines.append(f"  • {label}: {human_scalar('resolution', resolution)}" + (f" — {note}" if note else ""))
+    return lines or ["  None"]
+
+
 def _render_candidate_pdf(
     snapshot: CandidateSnapshot,
     model: DiagramModel,
@@ -328,36 +486,45 @@ def _render_candidate_pdf(
     body = ParagraphStyle("CandidateBody", parent=styles["BodyText"], fontName="CandidateNotoSans", fontSize=8.5, leading=12)
     code = ParagraphStyle("CandidateCode", parent=body, fontName="CandidateNotoSans", fontSize=7, leading=9, leftIndent=6, borderColor=colors.HexColor("#CBD5E1"), borderWidth=0.5, borderPadding=6, splitLongWords=1, wordWrap="LTR")
     notice = ParagraphStyle("CandidateNotice", parent=body, alignment=TA_CENTER, backColor=colors.HexColor("#FEF3C7"), borderColor=colors.HexColor("#F59E0B"), borderWidth=0.5, borderPadding=7, spaceAfter=12)
-    document = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm, title="Service Requirements and Delivery Candidate", author="Local Contract Scope PoC")
+    document = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm, title=str(labels["title"]), author="Service Requirement Blueprint")
     story: list[object] = [
         Paragraph(html.escape(str(labels["title"])), title),
         Paragraph(html.escape(str(labels["candidate_notice"])), notice),
-        Paragraph(html.escape(str(labels["source_identity"])), heading),
-        Paragraph(f"Case ID: <font name='CandidateNotoSans'>{html.escape(snapshot.case_id)}</font><br/>Candidate ID: {html.escape(snapshot.candidate_id)}<br/>Candidate version: {snapshot.version}<br/>Created at: {html.escape(snapshot.created_at)}", body),
-        Spacer(1, 8),
-        Paragraph(f"JSON A: version {snapshot.json_a.version}, SHA-256 {snapshot.json_a.sha256}, {snapshot.json_a.byte_length} bytes<br/>JSON B: version {snapshot.json_b.version}, SHA-256 {snapshot.json_b.sha256}, {snapshot.json_b.byte_length} bytes", body),
-        Paragraph(html.escape(str(labels["integrity"])), heading),
-        Paragraph("The manifest binds these exact source versions and the saved PDF and SVG bytes. Preview and download use the saved files; they are not re-rendered.", body),
+        Paragraph("Shared Version", heading),
+        Paragraph(f"Version {snapshot.version}<br/>Prepared {html.escape(snapshot.created_at)}", body),
         Paragraph(html.escape(str(labels["blueprint"])), heading),
         _blueprint_drawing(model, assets),
         PageBreak(),
         Paragraph(html.escape(str(labels["client_requirements"])), heading),
     ]
     for key, value in snapshot.json_a.document.items():
+        if key in MACHINE_ONLY_DOCUMENT_FIELDS:
+            continue
         story.append(Paragraph(html.escape(_field_label(key, assets)), heading))
-        rendered = json.dumps(value, ensure_ascii=False, indent=2)
-        story.append(Paragraph("<br/>".join(html.escape(line) or "&#160;" for line in rendered.splitlines()), code))
+        rendered = (
+            _open_item_lines(snapshot.json_a.document, assets)
+            if key == "open_items"
+            else _human_document_lines(value, assets, field_key=key)
+        )
+        story.append(Paragraph("<br/>".join(html.escape(line) or "&#160;" for line in rendered), code))
     story.extend([PageBreak(), Paragraph(html.escape(str(labels["contractor_proposal"])), heading)])
     for key, value in snapshot.json_b.document.items():
+        if key in MACHINE_ONLY_DOCUMENT_FIELDS:
+            continue
         story.append(Paragraph(html.escape(_field_label(key, assets)), heading))
-        rendered = json.dumps(value, ensure_ascii=False, indent=2)
-        story.append(Paragraph("<br/>".join(html.escape(line) or "&#160;" for line in rendered.splitlines()), code))
+        rendered = _human_document_lines(
+            value,
+            assets,
+            field_key=key,
+            contractor_authored=True,
+        )
+        story.append(Paragraph("<br/>".join(html.escape(line) or "&#160;" for line in rendered), code))
     try:
         document.build(story)
     except Exception as error:
         raise DocumentIntegrityError("pdf_render_failed") from error
     raw = buffer.getvalue()
-    required = (str(labels["title"]), str(labels["candidate_notice"]), snapshot.case_id, snapshot.json_a.sha256, snapshot.json_b.sha256)
+    required = (str(labels["title"]), str(labels["candidate_notice"]), f"Version {snapshot.version}")
     validate_candidate_pdf(raw, required)
     return raw
 

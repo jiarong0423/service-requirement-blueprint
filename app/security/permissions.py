@@ -19,6 +19,19 @@ def require_admin(handler: Callable[..., object]) -> Callable[..., object]:
     return wrapped
 
 
+def require_member(handler: Callable[..., object]) -> Callable[..., object]:
+    """Allow active non-administrator accounts into member-only workflows."""
+
+    @wraps(handler)
+    def wrapped(*args: object, **kwargs: object) -> object:
+        if g.user is None or g.user["system_role"] != "member":
+            abort(404)
+        return handler(*args, **kwargs)
+
+    wrapped.requires_authenticated_user = True
+    return wrapped
+
+
 def load_owner_case(case_id: str, allowed_states: Collection[str] | None = None):
     if g.user is None or g.user["system_role"] == "admin":
         abort(404)

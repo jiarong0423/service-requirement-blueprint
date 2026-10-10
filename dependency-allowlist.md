@@ -1,6 +1,6 @@
 # Dependency Command Allowlist
 
-Review date: 2026-10-07
+Review date: 2026-10-11
 
 ## Allowed Command
 

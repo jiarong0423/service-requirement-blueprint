@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import context_bar with context %}
 {% block content %}
-<section class="card narrow"><p class="eyebrow">01–08</p><h1>{{ tr('page.owner_guide') }}</h1><p>{{ tr('guide.intro') }}</p>
-<form method="post" action="/{{ locale }}/owner/requirements"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>{{ tr('field.working_name') }}<input name="title" maxlength="200" required></label><button>{{ tr('action.create_draft') }}</button></form>
+{{ context_bar('Client', 'Clarify', 'Drafting requirements', 'Name the requirement draft', 'clarify') }}
+<section class="card narrow guided-intro"><p class="eyebrow">Clarify · 8 guided sections</p><h1>{{ tr('page.owner_guide') }}</h1><p>{{ tr('guide.intro') }}</p><p>The draft stays private until you create an invitation for one contractor.</p>
+<form method="post" action="/{{ locale }}/owner/requirements" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>{{ tr('field.working_name') }}<input name="title" maxlength="200" required></label><button data-ui="primary-action">{{ tr('action.create_draft') }}</button></form>
 </section>
 {% endblock %}

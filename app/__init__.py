@@ -5,19 +5,32 @@ import stat
 import uuid
 from pathlib import Path
 
-from flask import Flask, redirect, render_template, request
+from flask import Flask, abort, g, redirect, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from app.config import SUPPORTED_LOCALES, build_config
 from app.db import close_db, connect_database
 from app.i18n import load_catalogs, translate
+from app.presentation import (
+    delivery_task,
+    invitation_state_label,
+    invitation_task,
+    issue_kind_label,
+    issue_state_label,
+    screen_copy,
+    stage_label,
+    state_label,
+    value_label,
+)
 from app.routes.localized import register_localized_routes
 from app.security.auth import load_current_user
 from app.security.csrf import ensure_nonce, validate_csrf
+from app.services.case_workflow import collect_open_items
 from app.services.candidate_workflow import CandidateWorkflowError, reconcile_candidate_storage
 from app.services.document_integrity import load_and_validate_document_assets
 from app.services.delivery_workflow import DeliveryWorkflowError, reconcile_delivery_storage
 from app.services.evidence_export import EvidenceExportError, reconcile_evidence_export_storage
+from app.services.json_b_workflow import JsonBWorkflowError, reconcile_json_artifact_storage
 
 
 def create_app(test_config: dict[str, object] | None = None) -> Flask:
@@ -41,6 +54,7 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
     app.config["JSON_B_SCHEMA_PATH"] = project_root / "app/schemas/json-b.v1.schema.json"
     app.config["CANDIDATE_MANIFEST_SCHEMA_PATH"] = project_root / "app/schemas/candidate-manifest.v1.schema.json"
     app.config["EVIDENCE_EXPORT_SCHEMA_PATH"] = project_root / "app/schemas/evidence-export-manifest.v1.schema.json"
+    app.config["EVIDENCE_EXPORT_RECORD_SCHEMA_PATH"] = project_root / "app/schemas/evidence-export-records.v1.schema.json"
     app.config["DOCUMENT_ASSETS"] = load_and_validate_document_assets(project_root)
     app.config["CATALOGS"] = load_catalogs(project_root / "app/i18n")
     if app.config.get("TESTING"):
@@ -85,6 +99,10 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
                 )
             except EvidenceExportError as error:
                 raise RuntimeError("evidence_export_storage_invalid") from error
+            try:
+                reconcile_json_artifact_storage(connection, Path(app.config["DATA_ROOT"]))
+            except JsonBWorkflowError as error:
+                raise RuntimeError("json_artifact_storage_invalid") from error
         finally:
             connection.close()
         for required in (
@@ -94,6 +112,7 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
             Path(app.config["JSON_B_SCHEMA_PATH"]),
             Path(app.config["CANDIDATE_MANIFEST_SCHEMA_PATH"]),
             Path(app.config["EVIDENCE_EXPORT_SCHEMA_PATH"]),
+            Path(app.config["EVIDENCE_EXPORT_RECORD_SCHEMA_PATH"]),
             project_root / "app/documents/candidate-labels.v1.json",
         ):
             if not required.is_file():
@@ -106,6 +125,9 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         load_current_user()
         ensure_nonce()
         if request.method == "POST":
+            handler = app.view_functions.get(request.endpoint or "")
+            if handler is not None and getattr(handler, "requires_authenticated_user", False) and g.user is None:
+                abort(401, description="error.session_expired")
             validate_csrf()
 
     @app.context_processor
@@ -115,7 +137,21 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         return {
             "locale": locale,
             "csrf_token": ensure_nonce(),
+            "collect_open_items": collect_open_items,
             "tr": lambda key, **values: translate(catalogs, locale, key, **values),
+            "ui": lambda screen, slot, **values: screen_copy(catalogs, locale, screen, slot, **values),
+            "ui_state": lambda state: state_label(catalogs, locale, state),
+            "ui_stage": lambda state: stage_label(catalogs, locale, state),
+            "ui_issue_state": lambda state: issue_state_label(catalogs, locale, state),
+            "ui_issue_kind": lambda kind: issue_kind_label(catalogs, locale, kind),
+            "ui_value": lambda field_name, value, contractor_authored=False: value_label(
+                catalogs, locale, field_name, value, contractor_authored
+            ),
+            "ui_invitation_state": lambda state: invitation_state_label(catalogs, locale, state),
+            "ui_invitation_task": lambda state, role: invitation_task(catalogs, locale, state, role),
+            "ui_delivery_task": lambda state, role, delivery_limit_reached=False: delivery_task(
+                catalogs, locale, state, role, delivery_limit_reached=delivery_limit_reached
+            ),
         }
 
     @app.after_request
@@ -141,7 +177,20 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
             return "Not Found", error.code or 500
         description = error.description if isinstance(error.description, str) else "error.access_denied"
         key = description if description in app.config["CATALOGS"][locale] else "error.access_denied"
-        return render_template("error.html", message=translate(app.config["CATALOGS"], locale, key)), error.code or 500
+        status = error.code or 500
+        title_key = {
+            400: "error.title_input",
+            401: "error.title_sign_in",
+            403: "error.title_access",
+            404: "error.title_not_found",
+            409: "error.title_changed",
+            422: "error.title_input",
+        }.get(status, "error.title_problem")
+        return render_template(
+            "error.html",
+            error_title=translate(app.config["CATALOGS"], locale, title_key),
+            message=translate(app.config["CATALOGS"], locale, key),
+        ), status
 
     @app.errorhandler(Exception)
     def sanitized_internal_error(_error: Exception):
@@ -157,6 +206,10 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         if locale is None:
             return "Internal Server Error", 500
         message = f"{translate(app.config['CATALOGS'], locale, 'error.internal')} Reference: {correlation_id}"
-        return render_template("error.html", message=message), 500
+        return render_template(
+            "error.html",
+            error_title=translate(app.config["CATALOGS"], locale, "error.title_problem"),
+            message=message,
+        ), 500
 
     return app

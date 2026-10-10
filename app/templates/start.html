@@ -1,13 +1,48 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import context_bar with context %}
+{% block main_class %}home-main{% endblock %}
 {% block content %}
-<section class="hero">
-  <p class="eyebrow">{{ tr('case.private') }}</p>
-  <h1>{{ tr('start.heading') }}</h1>
-  <p>{{ tr('start.summary') }}</p>
-  {% if g.user %}
-    <a class="button" href="/{{ locale }}/owner/guide">{{ tr('action.start_requirement') }}</a>
-  {% else %}
-    <a class="button" href="/{{ locale }}/login">{{ tr('action.sign_in') }}</a>
-  {% endif %}
+<div class="home-page">
+{{ context_bar('Administrator' if g.user and g.user.system_role == 'admin' else ('Member' if g.user else 'Visitor'), 'Overview', tr('status.account_active') if g.user else 'Not started', ('Open administration' if g.user.system_role == 'admin' else 'Open your workspace or start a requirement') if g.user else 'Choose the role that matches your work', none) }}
+<section class="home-hero" data-ui="home-hero">
+  <div class="hero-copy">
+    <p class="eyebrow">One private case · One shared version</p>
+    <h1>Turn a website request into one version both sides can approve.</h1>
+    <p class="hero-lead">The client defines the scope, an invited contractor quotes it, and delivery is reviewed against the same confirmed version.</p>
+    {% if g.user and g.user.system_role == 'member' %}
+      <a class="button button-primary button-large" data-ui="primary-action" href="/{{ locale }}/owner/guide">{{ tr('action.start_requirement') }}</a>
+      <a class="button button-secondary button-large" href="/{{ locale }}/account">Open workspace</a>
+    {% elif g.user and g.user.system_role == 'admin' %}
+      <a class="button button-primary button-large" data-ui="primary-action" href="/{{ locale }}/admin/accounts">Open administration</a>
+      <a class="button button-secondary button-large" href="/{{ locale }}/admin/service-health">Service health</a>
+    {% endif %}
+  </div>
+  <aside class="hero-proof{% if not g.user %} hero-entry{% endif %}" aria-label="{{ 'Choose a starting action' if not g.user else 'Product outcome' }}">
+    {% if g.user %}
+      <p class="eyebrow">One shared record</p>
+      <strong>Both sides see the same scope and the same next step.</strong>
+      <p>No silent approval. No changing the confirmed version. New work starts as a separate proposal.</p>
+    {% else %}
+      <p class="eyebrow">Choose your role</p>
+      <div class="role-entry-list">
+        <div class="role-entry role-entry-primary"><div><strong>Client</strong><span>Create a private requirement, then invite one contractor.</span></div><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/login?account=client&amp;flow=start">Start</a></div>
+        <div class="role-entry"><div><strong>Invited contractor</strong><span>Invitation required. Open only work assigned to this account.</span></div><a class="button button-secondary" href="/{{ locale }}/login?account=contractor">Sign in</a></div>
+        <div class="role-entry role-entry-admin"><div><strong>Administrator</strong><span>Account and service operations only. Private cases stay inaccessible.</span></div><a class="button button-secondary" href="/{{ locale }}/login?account=admin">Admin sign in</a></div>
+      </div>
+    {% endif %}
+  </aside>
 </section>
+
+<section class="value-section" aria-labelledby="workflow-heading">
+  <div class="section-heading"><div><p class="eyebrow">The complete workflow</p><h2 id="workflow-heading">From requirement to evidence, in one private case</h2></div><p class="workflow-trust">Invite-only · No silent approval · New scope becomes a separate proposal</p></div>
+  <div class="workflow-cards workflow-cards-six">
+    <article><span>01</span><h3>Client clarifies</h3><p>Guided answers become one reviewable requirement.</p></article>
+    <article><span>02</span><h3>Contractor quotes</h3><p>The proposal states scope, price, exclusions, and acceptance.</p></article>
+    <article><span>03</span><h3>Both review</h3><p>Both sides see the same saved agreement and visual workflow.</p></article>
+    <article><span>04</span><h3>Both confirm</h3><p>The version becomes final only after both people explicitly confirm it.</p></article>
+    <article><span>05</span><h3>Deliver and inspect</h3><p>Returns and fixes stay connected to the agreed version.</p></article>
+    <article><span>06</span><h3>Export evidence</h3><p>Both parties can keep the agreement and delivery history in one ZIP.</p></article>
+  </div>
+</section>
+</div>
 {% endblock %}

@@ -89,7 +89,14 @@ def test_bilateral_confirmation_formalizes_same_saved_bytes_without_rerender(
     assert second.location.endswith(f"/en/cases/{context['case_id']}/formal")
     formal_page = context["owner"].get(second.location)
     assert formal_page.status_code == 200
-    assert b"Formal status applies to the exact files" in formal_page.data
+    assert b"This is the unchanged agreement both parties reviewed" in formal_page.data
+    old_section = context["owner"].get(
+        f"/en/owner/requirements/{context['case_id']}/sections/6"
+    )
+    assert old_section.status_code == 302
+    assert old_section.location.endswith(f"/en/cases/{context['case_id']}/formal")
+    for party in (context["owner"], context["contractor"]):
+        assert party.get(f"/en/cases/{context['case_id']}/json-b/reviews/1").status_code == 200
 
     for filename, expected in before.items():
         formal = context["contractor"].get(
@@ -193,6 +200,78 @@ def test_bilateral_confirmation_formalizes_same_saved_bytes_without_rerender(
     ).data == before["document.pdf"]
 
 
+def test_formal_page_downloads_all_five_fixed_files_for_both_parties(demo_runtime) -> None:
+    context = create_candidate_context(demo_runtime)
+    for party in (context["owner"], context["contractor"]):
+        assert acknowledge(party, context["case_id"], context["candidate_id"]).status_code == 302
+        assert confirm(party, context["case_id"], context["candidate_id"]).status_code == 302
+
+    expected_sources = {
+        "requirement.json": (context["json_a_raw"], "requirement-json-a.json"),
+        "proposal.json": (context["json_b_raw"], "proposal-json-b.json"),
+    }
+    for party in (context["owner"], context["contractor"]):
+        page = party.get(f"/en/cases/{context['case_id']}/formal")
+        assert page.status_code == 200
+        for filename in (
+            "requirement.json",
+            "proposal.json",
+            "document.pdf?download=1",
+            "diagram.svg?download=1",
+            "manifest.json",
+        ):
+            assert f"/formal/{filename}".encode() in page.data
+        for filename, (expected, download_name) in expected_sources.items():
+            response = party.get(f"/en/cases/{context['case_id']}/formal/{filename}")
+            assert response.status_code == 200
+            assert response.data == expected
+            assert response.mimetype == "application/json"
+            assert response.headers["Content-Disposition"] == (
+                f'attachment; filename="{download_name}"'
+            )
+            assert response.headers["Cache-Control"] == "no-store, private"
+
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        json_a_artifact_id = connection.execute(
+            "SELECT current_json_a_artifact_id FROM cases WHERE id = ?",
+            (context["case_id"],),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    earlier_owner_link = context["owner"].get(
+        f"/en/owner/requirements/{context['case_id']}/json-a/{json_a_artifact_id}/download"
+    )
+    assert earlier_owner_link.status_code == 200
+    assert earlier_owner_link.data == context["json_a_raw"]
+    assert context["contractor"].get(
+        f"/en/owner/requirements/{context['case_id']}/json-a/{json_a_artifact_id}/download"
+    ).status_code == 404
+
+
+def test_formal_source_download_rejects_saved_file_tamper(demo_runtime) -> None:
+    context = create_candidate_context(demo_runtime)
+    for party in (context["owner"], context["contractor"]):
+        assert acknowledge(party, context["case_id"], context["candidate_id"]).status_code == 302
+        assert confirm(party, context["case_id"], context["candidate_id"]).status_code == 302
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        relative_path = connection.execute(
+            "SELECT relative_path FROM artifacts WHERE id = ("
+            "SELECT json_b_artifact_id FROM candidate_versions WHERE id = ?)",
+            (context["candidate_id"],),
+        ).fetchone()["relative_path"]
+    finally:
+        connection.close()
+    path = context["instance_root"] / "data" / relative_path
+    path.chmod(0o600)
+    path.write_bytes(context["json_b_raw"] + b"tamper")
+    path.chmod(0o400)
+    assert context["owner"].get(
+        f"/en/cases/{context['case_id']}/formal/proposal.json"
+    ).status_code == 404
+
+
 def test_confirmation_requires_own_acknowledgement_and_csrf(demo_runtime) -> None:
     context = create_candidate_context(demo_runtime)
     no_csrf = context["owner"].post(
@@ -227,25 +306,91 @@ def test_confirmation_rejects_stale_revision_and_duplicate_current_is_idempotent
         connection.close()
 
 
-def test_withdraw_then_reconfirm_preserves_confirmation_history(demo_runtime) -> None:
+def test_each_withdrawal_requires_fresh_acknowledgement_before_reconfirmation(demo_runtime) -> None:
     context = create_candidate_context(demo_runtime)
     assert acknowledge(context["owner"], context["case_id"], context["candidate_id"]).status_code == 302
     assert confirm(context["owner"], context["case_id"], context["candidate_id"]).status_code == 302
-    withdrawn = context["owner"].post(
-        f"/en/cases/{context['case_id']}/candidates/{context['candidate_id']}/confirmations/withdraw",
-        data={"csrf_token": csrf(context["owner"]), "expected_revision": "1"},
-    )
-    assert withdrawn.status_code == 302
-    assert confirm(context["owner"], context["case_id"], context["candidate_id"]).status_code == 302
+    for renewal_number in (1, 2):
+        withdrawn = context["owner"].post(
+            f"/en/cases/{context['case_id']}/candidates/{context['candidate_id']}/confirmations/withdraw",
+            data={"csrf_token": csrf(context["owner"]), "expected_revision": "1"},
+        )
+        assert withdrawn.status_code == 302
+        assert confirm(context["owner"], context["case_id"], context["candidate_id"]).status_code == 422
+        review = context["owner"].get(context["candidate_url"])
+        assert review.status_code == 200
+        assert b"Your prior confirmation was withdrawn" in review.data
+        assert acknowledge(
+            context["owner"], context["case_id"], context["candidate_id"]
+        ).status_code == 302
+        assert confirm(
+            context["owner"], context["case_id"], context["candidate_id"]
+        ).status_code == 302
+        connection = connect_database(context["instance_root"] / "app.sqlite3")
+        try:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM candidate_acknowledgement_renewals"
+            ).fetchone()[0] == renewal_number
+        finally:
+            connection.close()
+
+    assert acknowledge(
+        context["contractor"], context["case_id"], context["candidate_id"]
+    ).status_code == 302
+    assert confirm(
+        context["contractor"], context["case_id"], context["candidate_id"]
+    ).status_code == 302
     connection = connect_database(context["instance_root"] / "app.sqlite3")
     try:
         history = connection.execute(
             "SELECT state FROM candidate_confirmations WHERE candidate_id = ? ORDER BY confirmed_at, id",
             (context["candidate_id"],),
         ).fetchall()
-        assert sorted(row[0] for row in history) == ["CURRENT", "WITHDRAWN"]
+        assert sorted(row[0] for row in history) == [
+            "FORMALIZED", "FORMALIZED", "WITHDRAWN", "WITHDRAWN",
+        ]
+        renewals = connection.execute(
+            "SELECT renewal.id, renewal.acknowledgement_id, renewal.withdrawn_confirmation_id, "
+            "renewal.renewal_kind "
+            "FROM candidate_acknowledgement_renewals AS renewal "
+            "JOIN candidate_confirmations AS confirmation "
+            "ON confirmation.id = renewal.withdrawn_confirmation_id "
+            "WHERE confirmation.actor_role = 'client' AND confirmation.state = 'WITHDRAWN'"
+        ).fetchall()
+        assert len(renewals) == 2
+        assert {row["renewal_kind"] for row in renewals} == {"EXPLICIT"}
+        assert len({row["withdrawn_confirmation_id"] for row in renewals}) == 2
+        assert len({row["acknowledgement_id"] for row in renewals}) == 1
+        formalized_confirmation_id = connection.execute(
+            "SELECT id FROM candidate_confirmations "
+            "WHERE candidate_id = ? AND actor_role = 'client' AND state = 'FORMALIZED'",
+            (context["candidate_id"],),
+        ).fetchone()[0]
+        with pytest.raises(sqlite3.IntegrityError, match="acknowledgement_renewal_binding_invalid"):
+            connection.execute(
+                "INSERT INTO candidate_acknowledgement_renewals("
+                "id, acknowledgement_id, withdrawn_confirmation_id, renewal_kind, renewed_at) "
+                "VALUES (?, ?, ?, 'LEGACY_ACKNOWLEDGEMENT_REUSE', ?)",
+                (
+                    str(uuid.uuid4()), renewals[0]["acknowledgement_id"],
+                    formalized_confirmation_id, utc_now(),
+                ),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="acknowledgement_renewals_append_only"):
+            connection.execute(
+                "UPDATE candidate_acknowledgement_renewals SET renewed_at = renewed_at WHERE id = ?",
+                (renewals[0]["id"],),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="acknowledgement_renewals_append_only"):
+            connection.execute(
+                "DELETE FROM candidate_acknowledgement_renewals WHERE id = ?",
+                (renewals[0]["id"],),
+            )
     finally:
         connection.close()
+    formal = context["owner"].get(f"/en/cases/{context['case_id']}/formal")
+    assert formal.status_code == 200
+    assert formal.data.count(b"Re-acknowledged") == 2
 
 
 def test_revision_request_invalidates_round_but_preserves_candidate_bytes(demo_runtime) -> None:
@@ -305,15 +450,25 @@ def test_formal_routes_reject_admin_third_member_and_anonymous(demo_runtime) -> 
         )
     finally:
         connection.close()
-    assert context["app"].test_client().get(f"/en/cases/{context['case_id']}/formal").status_code == 401
+    protected_paths = (
+        "formal",
+        "formal/manifest.json",
+        "formal/document.pdf",
+        "formal/diagram.svg",
+        "formal/requirement.json",
+        "formal/proposal.json",
+    )
+    anonymous = context["app"].test_client()
+    for path in protected_paths:
+        assert anonymous.get(f"/en/cases/{context['case_id']}/{path}").status_code == 401
     for email, password in (
         ("admin@example.test", context["passwords"]["admin"]),
         ("slice6-third@example.test", "slice6-third-password"),
     ):
         outsider = context["app"].test_client()
         assert login(outsider, "en", email, password).status_code == 302
-        assert outsider.get(f"/en/cases/{context['case_id']}/formal").status_code == 404
-        assert outsider.get(f"/en/cases/{context['case_id']}/formal/document.pdf").status_code == 404
+        for path in protected_paths:
+            assert outsider.get(f"/en/cases/{context['case_id']}/{path}").status_code == 404
 
 
 def test_formal_read_revalidates_saved_party_bindings_after_restart(demo_runtime) -> None:
@@ -393,6 +548,70 @@ def test_formal_read_survives_current_asset_rotation_but_rejects_saved_file_tamp
     path.write_bytes(before + b"tamper")
     path.chmod(0o400)
     assert client.get(f"/en/cases/{context['case_id']}/formal/document.pdf").status_code == 404
+
+
+def test_saved_template_1_3_candidate_remains_byte_identical_under_1_4_runtime(
+    demo_runtime,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.candidate_documents.TEMPLATE_VERSION", "candidate-document/1.3"
+    )
+    monkeypatch.setattr(
+        "app.services.candidate_workflow.TEMPLATE_VERSION", "candidate-document/1.3"
+    )
+    context = create_candidate_context(demo_runtime)
+    before = {
+        "manifest.json": _component(context["owner"], context, "manifest.json"),
+        "document.pdf": _component(context["owner"], context, "document.pdf"),
+        "diagram.svg": _component(context["owner"], context, "diagram.svg"),
+        "requirement.json": context["json_a_raw"],
+        "proposal.json": context["json_b_raw"],
+    }
+    connection = connect_database(context["instance_root"] / "app.sqlite3")
+    try:
+        assert connection.execute(
+            "SELECT template_version FROM candidate_versions WHERE id = ?",
+            (context["candidate_id"],),
+        ).fetchone()[0] == "candidate-document/1.3"
+    finally:
+        connection.close()
+
+    monkeypatch.setattr(
+        "app.services.candidate_documents.TEMPLATE_VERSION", "candidate-document/1.4"
+    )
+    monkeypatch.setattr(
+        "app.services.candidate_workflow.TEMPLATE_VERSION", "candidate-document/1.4"
+    )
+    for party in (context["owner"], context["contractor"]):
+        assert acknowledge(party, context["case_id"], context["candidate_id"]).status_code == 302
+        assert confirm(party, context["case_id"], context["candidate_id"]).status_code == 302
+
+    original_assets = context["app"].config["DOCUMENT_ASSETS"]
+    rotated_assets = replace(
+        original_assets,
+        catalog_record=FileRecord("catalog.en.json", "application/json", "1" * 64, 1),
+        label_record=FileRecord("candidate-labels.v1.json", "application/json", "2" * 64, 1),
+    )
+    monkeypatch.setattr("app.load_and_validate_document_assets", lambda _root: rotated_assets)
+    restarted = create_app(
+        {
+            "TESTING": False,
+            "SECRET_KEY": (context["instance_root"] / "secret.key").read_bytes(),
+            "INSTANCE_ROOT": context["instance_root"],
+            "DATABASE": context["instance_root"] / "app.sqlite3",
+            "DATA_ROOT": context["instance_root"] / "data",
+            "SESSION_COOKIE_SECURE": False,
+        }
+    )
+    client = restarted.test_client()
+    assert login(
+        client, "en", "owner@example.test", context["passwords"]["owner"]
+    ).status_code == 302
+    for filename, expected in before.items():
+        response = client.get(f"/en/cases/{context['case_id']}/formal/{filename}")
+        assert response.status_code == 200
+        assert response.data == expected
 
 
 def test_separate_proposal_is_empty_parent_linked_and_idempotent(demo_runtime) -> None:

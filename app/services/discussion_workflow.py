@@ -73,7 +73,7 @@ def post_message(
     if correction_of_id is not None:
         _validated_uuid(correction_of_id, "message_invalid")
     with immediate_transaction(connection):
-        _case, role = _party(connection, case_id, actor_id)
+        case, role = _party(connection, case_id, actor_id)
         existing = connection.execute(
             "SELECT id, body, correction_of_id FROM case_messages "
             "WHERE case_id = ? AND author_id = ? AND idempotency_key = ?",
@@ -200,7 +200,7 @@ def transition_issue(
     if len(note) > 4_000 or expected_revision < 1:
         raise DiscussionWorkflowError("issue_invalid")
     with immediate_transaction(connection):
-        _case, role = _party(connection, case_id, actor_id)
+        case, role = _party(connection, case_id, actor_id)
         issue = connection.execute(
             "SELECT * FROM case_issues WHERE id = ? AND case_id = ?",
             (issue_id, case_id),
@@ -213,7 +213,44 @@ def transition_issue(
         if transition is None:
             raise DiscussionWorkflowError("issue_invalid_transition")
         next_state, records_proposer, requires_other_role = transition
-        if requires_other_role and issue["proposal_role"] == role:
+        related_json_b_artifact_id = None
+        if issue["kind"] == "JSON_B_OBJECTION":
+            proposal_actions = {"PROPOSE", "PROPOSE_OUT_OF_SCOPE"}
+            response_actions = {"ACCEPT", "ACCEPT_OUT_OF_SCOPE", "REQUEST_REVISION"}
+            if action in proposal_actions:
+                if role != "contractor":
+                    raise DiscussionWorkflowError("issue_action_forbidden")
+                related_json_b_artifact_id = case["current_json_b_artifact_id"]
+                current_proposal = connection.execute(
+                    "SELECT 1 FROM json_b_versions WHERE case_id = ? AND artifact_id = ? "
+                    "AND state = 'CURRENT'",
+                    (case_id, related_json_b_artifact_id),
+                ).fetchone()
+                if related_json_b_artifact_id is None or current_proposal is None:
+                    raise DiscussionWorkflowError("issue_artifact_conflict")
+            elif action in response_actions:
+                if role != "client":
+                    raise DiscussionWorkflowError("issue_action_forbidden")
+                proposal_event = connection.execute(
+                    "SELECT related_json_b_artifact_id FROM issue_events "
+                    "WHERE issue_id = ? AND issue_revision = ? "
+                    "AND action IN ('PROPOSED', 'OUT_OF_SCOPE_PROPOSED')",
+                    (issue_id, expected_revision),
+                ).fetchone()
+                related_json_b_artifact_id = (
+                    proposal_event["related_json_b_artifact_id"]
+                    if proposal_event is not None
+                    else None
+                )
+                if (
+                    related_json_b_artifact_id is None
+                    or related_json_b_artifact_id != case["current_json_b_artifact_id"]
+                ):
+                    if action != "REQUEST_REVISION":
+                        raise DiscussionWorkflowError("issue_artifact_conflict")
+            else:
+                raise DiscussionWorkflowError("issue_invalid_transition")
+        elif requires_other_role and issue["proposal_role"] == role:
             raise DiscussionWorkflowError("issue_requires_other_role")
         next_revision = expected_revision + 1
         proposal_role = role if records_proposer else issue["proposal_role"]
@@ -229,7 +266,7 @@ def transition_issue(
         connection.execute(
             "INSERT INTO issue_events(id, issue_id, actor_id, actor_role, action, from_state, "
             "to_state, note, related_json_b_artifact_id, issue_revision, server_created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(uuid.uuid4()),
                 issue_id,
@@ -239,6 +276,7 @@ def transition_issue(
                 issue["state"],
                 next_state,
                 note,
+                related_json_b_artifact_id,
                 next_revision,
                 utc_now(),
             ),
@@ -260,9 +298,17 @@ def list_collaboration(connection: sqlite3.Connection, case_id: str, actor_id: s
         (case_id,),
     ).fetchall()
     issues = connection.execute(
-        "SELECT id, kind, source_json_b_artifact_id, field_pointer, summary, opened_by_role, "
-        "state, proposal_role, revision, created_at, updated_at FROM case_issues "
-        "WHERE case_id = ? ORDER BY created_at, id",
+        "SELECT issue.id, issue.kind, issue.source_json_b_artifact_id, issue.field_pointer, "
+        "issue.summary, issue.opened_by_role, issue.state, issue.proposal_role, issue.revision, "
+        "issue.created_at, issue.updated_at, "
+        "CASE WHEN issue.kind <> 'JSON_B_OBJECTION' "
+        "OR issue.state NOT IN ('PROPOSED', 'OUT_OF_SCOPE_PROPOSED') THEN 1 "
+        "WHEN EXISTS (SELECT 1 FROM issue_events AS event JOIN cases AS current_case "
+        "ON current_case.id = issue.case_id WHERE event.issue_id = issue.id "
+        "AND event.issue_revision = issue.revision "
+        "AND event.related_json_b_artifact_id = current_case.current_json_b_artifact_id) "
+        "THEN 1 ELSE 0 END AS proposal_artifact_current "
+        "FROM case_issues AS issue WHERE issue.case_id = ? ORDER BY issue.created_at, issue.id",
         (case_id,),
     ).fetchall()
     issue_events = connection.execute(

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="790" viewBox="0 0 1600 790">
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#346d68" /></marker></defs>
+<rect width="1600" height="790" fill="#f6f3ed" />
+<text x="68" y="76" font-family="Noto Sans TC, sans-serif" font-size="40" font-weight="700" fill="#223b3a">Service Requirement Blueprint · Architecture</text>
+<text x="68" y="120" font-family="Noto Sans TC, sans-serif" font-size="23" font-weight="400" fill="#223b3a">An offline two-party workflow; the server owns permissions, state, and evidence.</text>
+<path d="M485 240 L550 240" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M1035 240 L1100 240" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M1320 305 L1320 350 L275 350 L275 405" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M1320 350 L797 350 L797 405" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M797 595 L797 650 L1320 650 L1320 605" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<path d="M485 505 L550 505" fill="none" stroke="#346d68" stroke-width="4" marker-end="url(#arrow)" />
+<rect x="65" y="175" width="420" height="130" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="90" y="217" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">Client + invited contractor</text>
+<text x="90" y="253" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Separate signed sessions</text>
+<text x="90" y="284" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Administrator has no case access</text>
+<rect x="560" y="175" width="475" height="130" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="585" y="217" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">Browser presentation</text>
+<text x="585" y="253" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Jinja templates + CSS + JavaScript</text>
+<text x="585" y="284" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Details fold; server enforces gates</text>
+<rect x="1110" y="175" width="420" height="130" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="1135" y="217" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">Flask application</text>
+<text x="1135" y="253" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Authentication + CSRF + party checks</text>
+<text x="1135" y="284" font-family="Noto Sans TC, sans-serif" font-size="20" font-weight="400" fill="#223b3a">Validated routes and workflow services</text>
+<rect x="65" y="415" width="420" height="180" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="90" y="457" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">SQLite transaction authority</text>
+<text x="90" y="493" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Roles, states, versions, server time</text>
+<text x="90" y="524" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Confirmations and inspections</text>
+<text x="90" y="555" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Acceptance requires a client action</text>
+<rect x="560" y="415" width="475" height="180" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="585" y="457" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">Immutable artifact storage</text>
+<text x="585" y="493" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Fixed JSON A, JSON B, PDF, SVG, manifest</text>
+<text x="585" y="524" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Fixed bytes, length, SHA-256 rechecked</text>
+<text x="585" y="555" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">No rerender on bilateral formalization</text>
+<rect x="1110" y="415" width="420" height="180" rx="18" fill="#ffffff" stroke="#b9ceca" stroke-width="2" />
+<text x="1135" y="457" font-family="Noto Sans TC, sans-serif" font-size="26" font-weight="700" fill="#223b3a">Portable evidence ZIP</text>
+<text x="1135" y="493" font-family="Noto Sans TC, sans-serif" font-size="20" font-weight="400" fill="#223b3a">Formal agreement and version history</text>
+<text x="1135" y="524" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Delivery and inspection history</text>
+<text x="1135" y="555" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Private drafts and secrets excluded</text>
+<text x="68" y="745" font-family="Noto Sans TC, sans-serif" font-size="21" font-weight="400" fill="#223b3a">Local Python / Flask / SQLite · No hosted service, runtime LLM, payment processing, or adjudication.</text>
+</svg>

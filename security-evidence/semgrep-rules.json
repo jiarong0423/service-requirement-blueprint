@@ -1,0 +1,112 @@
+{
+  "rules": [
+    {
+      "id": "srb.dynamic-python-execution",
+      "languages": [
+        "python"
+      ],
+      "message": "dynamic-python-execution",
+      "severity": "ERROR",
+      "pattern-either": [
+        {
+          "pattern": "eval(...)"
+        },
+        {
+          "pattern": "exec(...)"
+        }
+      ]
+    },
+    {
+      "id": "srb.shell-command-injection",
+      "languages": [
+        "python"
+      ],
+      "message": "shell-command-injection",
+      "severity": "ERROR",
+      "pattern-either": [
+        {
+          "pattern": "subprocess.run(..., shell=True, ...)"
+        },
+        {
+          "pattern": "subprocess.Popen(..., shell=True, ...)"
+        },
+        {
+          "pattern": "subprocess.call(..., shell=True, ...)"
+        },
+        {
+          "pattern": "os.system(...)"
+        },
+        {
+          "pattern": "os.popen(...)"
+        }
+      ]
+    },
+    {
+      "id": "srb.unsafe-deserialization",
+      "languages": [
+        "python"
+      ],
+      "message": "unsafe-deserialization",
+      "severity": "ERROR",
+      "pattern-either": [
+        {
+          "pattern": "pickle.load(...)"
+        },
+        {
+          "pattern": "pickle.loads(...)"
+        },
+        {
+          "pattern": "yaml.unsafe_load(...)"
+        },
+        {
+          "pattern": "yaml.load(...)"
+        }
+      ]
+    },
+    {
+      "id": "srb.disabled-tls-verification",
+      "languages": [
+        "python"
+      ],
+      "message": "disabled-tls-verification",
+      "severity": "ERROR",
+      "pattern-either": [
+        {
+          "pattern": "requests.get(..., verify=False, ...)"
+        },
+        {
+          "pattern": "requests.post(..., verify=False, ...)"
+        },
+        {
+          "pattern": "requests.request(..., verify=False, ...)"
+        }
+      ]
+    },
+    {
+      "id": "srb.flask-debug-runtime",
+      "languages": [
+        "python"
+      ],
+      "message": "flask-debug-runtime",
+      "severity": "ERROR",
+      "pattern-either": [
+        {
+          "pattern": "$APP.run(..., debug=True, ...)"
+        }
+      ]
+    },
+    {
+      "id": "srb.unbounded-template-string",
+      "languages": [
+        "python"
+      ],
+      "message": "unbounded-template-string",
+      "severity": "ERROR",
+      "pattern-either": [
+        {
+          "pattern": "flask.render_template_string(...)"
+        }
+      ]
+    }
+  ]
+}

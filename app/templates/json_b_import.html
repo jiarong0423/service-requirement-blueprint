@@ -1,20 +1,22 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import context_bar with context %}
 {% block title %}{{ tr('page.json_b_import') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
-<section class="card stack">
-  <h1>{{ tr('page.json_b_import') }}</h1>
-  <p>{{ tr('notice.json_b_exact_bytes') }}</p>
-  <dl class="identity-grid">
+{{ context_bar(tr('role.contractor'), 'Quote', 'Preparing a shared review version', 'Share the saved proposal for review', 'quote') }}
+<section class="card stack proposal-handoff">
+  <header class="section-heading"><div><p class="eyebrow">Quote · Proposal handoff</p><h1>{{ tr('page.json_b_import') }}</h1></div></header>
+  <section class="action-panel"><p class="eyebrow">Step 1</p><h2>Download your saved proposal.</h2><p>{{ tr('notice.json_b_exact_bytes') }}</p><p><a class="button button-secondary" href="/{{ locale }}/cases/{{ case_id }}/json-b/draft/exports/{{ artifact.id }}/download">{{ tr('action.download_json_b') }}</a></p></section>
+  <details class="technical-disclosure"><summary>Verify the proposal file</summary><dl class="identity-grid">
     <div><dt>{{ tr('field.document_id') }}</dt><dd><code>{{ artifact.id }}</code></dd></div>
     <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ artifact.sha256 }}</code></dd></div>
     <div><dt>{{ tr('field.byte_length') }}</dt><dd>{{ artifact.byte_length }}</dd></div>
-  </dl>
-  <p><a class="button" href="/{{ locale }}/cases/{{ case_id }}/json-b/draft/exports/{{ artifact.id }}/download">{{ tr('action.download_json_b') }}</a></p>
+  </dl></details>
+  <section class="action-panel"><p class="eyebrow">Step 2</p><h2>Upload the same file for review.</h2><p>The client can read the proposal after this check succeeds.</p></section>
   <form method="post" enctype="multipart/form-data" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="artifact_id" value="{{ artifact.id }}">
     <label>{{ tr('field.json_b_file') }}<input type="file" name="json_b_file" accept="application/json,.json" required></label>
-    <button>{{ tr('action.submit_json_b') }}</button>
+    <button data-ui="primary-action">{{ tr('action.submit_json_b') }}</button>
   </form>
 </section>
 {% endblock %}

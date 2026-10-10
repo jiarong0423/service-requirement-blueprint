@@ -345,7 +345,7 @@ def test_cli_reports_only_relative_artifact_paths(project_root: Path) -> None:
 
 def test_cli_sanitizes_unexpected_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fail_build(self: Gate0Builder) -> dict[str, object]:
-        raise RuntimeError("sensitive absolute path: /Users/example/private")
+        raise RuntimeError("sensitive absolute path: /home/example/private")
 
     monkeypatch.setattr(Gate0Builder, "build", fail_build)
     assert cli_module.main(["gate0"]) == 1

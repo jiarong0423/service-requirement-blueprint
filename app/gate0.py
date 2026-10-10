@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
-import pypdfium2 as pdfium
 from fontTools.ttLib import TTFont as FontToolsTTFont
 from pypdf import PdfReader
 from reportlab.graphics import renderPDF, renderSVG
@@ -26,6 +25,7 @@ from reportlab.pdfbase.ttfonts import TTFont as ReportLabTTFont
 from reportlab.pdfgen import canvas
 
 from app.config import SUPPORTED_LOCALES
+from app.services.pdfium_runtime import render_pdf_images
 
 MANIFEST_SCHEMA = "gate0-preflight-manifest/1.1"
 CATALOG_PATHS = {locale: Path(f"app/i18n/catalog.{locale}.json") for locale in SUPPORTED_LOCALES}
@@ -450,22 +450,25 @@ class Gate0Builder:
             raise Gate0Error("pdf_font_not_embedded")
 
         try:
-            rendered = pdfium.PdfDocument(data)
-            if len(rendered) != 1:
-                raise Gate0Error("pdf_raster_page_count_invalid")
-            bitmap = rendered[0].render(scale=float(RASTER_PROFILE["scale"]))
-            image = bitmap.to_pil().convert("RGB")
+            images = render_pdf_images(data, scale=float(RASTER_PROFILE["scale"]))
+            try:
+                if len(images) != 1:
+                    raise Gate0Error("pdf_raster_page_count_invalid")
+                image = images[0]
+                expected_size = (int(RASTER_PROFILE["expected_width"]), int(RASTER_PROFILE["expected_height"]))
+                if image.size != expected_size:
+                    raise Gate0Error("pdf_raster_size_invalid")
+                pixels = image.get_flattened_data()
+                nonwhite = sum(1 for red, green, blue in pixels if min(red, green, blue) < 248)
+                if nonwhite / (image.width * image.height) < float(RASTER_PROFILE["minimum_nonwhite_ratio"]):
+                    raise Gate0Error("pdf_raster_blank")
+            finally:
+                for image in images:
+                    image.close()
         except Gate0Error:
             raise
         except Exception as error:
             raise Gate0Error("pdf_raster_failed") from error
-        expected_size = (int(RASTER_PROFILE["expected_width"]), int(RASTER_PROFILE["expected_height"]))
-        if image.size != expected_size:
-            raise Gate0Error("pdf_raster_size_invalid")
-        pixels = image.get_flattened_data()
-        nonwhite = sum(1 for red, green, blue in pixels if min(red, green, blue) < 248)
-        if nonwhite / (image.width * image.height) < float(RASTER_PROFILE["minimum_nonwhite_ratio"]):
-            raise Gate0Error("pdf_raster_blank")
 
     def _allocate_run_id(self) -> str:
         for _ in range(5):

@@ -8,16 +8,19 @@ import shutil
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import app.services.invitation_workflow as invitation_module
 from app.db import apply_migrations, connect_database
 from app.services.invitation_workflow import (
     INVITATION_TTL,
     InvitationWorkflowError,
     accept_invitation,
+    cancel_accepted_invitation_before_import,
     create_invitation,
     import_json_a,
     preview_invitation,
@@ -96,6 +99,46 @@ def _issue_invitation(context, *, now: datetime = FIXED_NOW):
             context["raw"],
             now=now,
         )
+    finally:
+        connection.close()
+
+
+def test_accept_invitation_never_reads_artifact_inside_writer_transaction(
+    demo_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = _prepare_source(demo_runtime)
+    issue = _issue_invitation(context)
+    connection = connect_database(context["database"])
+    writer_active = False
+    original_transaction = invitation_module.immediate_transaction
+    original_read = invitation_module.read_verified
+
+    @contextmanager
+    def tracked_transaction(active_connection):
+        nonlocal writer_active
+        with original_transaction(active_connection):
+            writer_active = True
+            try:
+                yield
+            finally:
+                writer_active = False
+
+    def guarded_read(*args, **kwargs):
+        assert writer_active is False
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(invitation_module, "immediate_transaction", tracked_transaction)
+    monkeypatch.setattr(invitation_module, "read_verified", guarded_read)
+    try:
+        accepted = accept_invitation(
+            connection,
+            context["data_root"],
+            issue.invitation_id,
+            issue.code,
+            context["contractor_id"],
+            now=FIXED_NOW + timedelta(minutes=1),
+        )
+        assert accepted.case_id == context["case_id"]
     finally:
         connection.close()
 
@@ -418,6 +461,129 @@ def test_accept_import_replay_and_restart_preserve_one_artifact(demo_runtime) ->
         ).fetchone()[0] == 2
     finally:
         second_restart.close()
+
+
+def test_owner_can_close_accepted_invitation_before_import_without_changing_source(demo_runtime) -> None:
+    context = _prepare_source(demo_runtime)
+    issue = _issue_invitation(context)
+    source_path = context["data_root"] / context["artifact"]["relative_path"]
+    original_bytes = source_path.read_bytes()
+    connection = connect_database(context["database"])
+    try:
+        accept_invitation(
+            connection,
+            context["data_root"],
+            issue.invitation_id,
+            issue.code,
+            context["contractor_id"],
+            now=FIXED_NOW + timedelta(minutes=1),
+        )
+        with pytest.raises(InvitationWorkflowError, match="invitation_unavailable"):
+            cancel_accepted_invitation_before_import(
+                connection,
+                context["case_id"],
+                issue.invitation_id,
+                context["contractor_id"],
+                now=FIXED_NOW + timedelta(minutes=2),
+            )
+        cancel_accepted_invitation_before_import(
+            connection,
+            context["case_id"],
+            issue.invitation_id,
+            context["owner_id"],
+            now=FIXED_NOW + timedelta(minutes=3),
+        )
+        invitation = connection.execute(
+            "SELECT state, accepted_at, source_invalidated_at, source_invalidation_reason "
+            "FROM invitations WHERE id = ?",
+            (issue.invitation_id,),
+        ).fetchone()
+        assert invitation["state"] == "accepted"
+        assert invitation["accepted_at"] is not None
+        assert invitation["source_invalidated_at"] is not None
+        assert invitation["source_invalidation_reason"] == "owner_cancelled_before_import"
+        case = connection.execute(
+            "SELECT state, contractor_id, current_json_a_artifact_id FROM cases WHERE id = ?",
+            (context["case_id"],),
+        ).fetchone()
+        assert tuple(case) == ("REQUIREMENT_DRAFT", None, context["artifact"]["id"])
+        assert connection.execute(
+            "SELECT COUNT(*) FROM json_a_source_verifications "
+            "WHERE invitation_id = ? AND actor_role = 'contractor'",
+            (issue.invitation_id,),
+        ).fetchone()[0] == 0
+        assert source_path.read_bytes() == original_bytes
+        with pytest.raises(InvitationWorkflowError, match="invitation_unavailable"):
+            cancel_accepted_invitation_before_import(
+                connection,
+                context["case_id"],
+                issue.invitation_id,
+                context["owner_id"],
+                now=FIXED_NOW + timedelta(minutes=4),
+            )
+        with pytest.raises(InvitationWorkflowError, match="case_unavailable"):
+            import_json_a(
+                connection,
+                context["data_root"],
+                context["schema_path"],
+                issue.invitation_id,
+                context["contractor_id"],
+                context["raw"],
+                now=FIXED_NOW + timedelta(minutes=5),
+            )
+    finally:
+        connection.close()
+
+    replacement = _issue_invitation(context, now=FIXED_NOW + timedelta(minutes=6))
+    assert replacement.invitation_id != issue.invitation_id
+    assert source_path.read_bytes() == original_bytes
+
+
+def test_accepted_invitation_cannot_be_closed_after_contractor_import(demo_runtime) -> None:
+    context = _prepare_source(demo_runtime)
+    issue = _issue_invitation(context)
+    connection = connect_database(context["database"])
+    try:
+        accept_invitation(
+            connection,
+            context["data_root"],
+            issue.invitation_id,
+            issue.code,
+            context["contractor_id"],
+            now=FIXED_NOW + timedelta(minutes=1),
+        )
+        import_json_a(
+            connection,
+            context["data_root"],
+            context["schema_path"],
+            issue.invitation_id,
+            context["contractor_id"],
+            context["raw"],
+            now=FIXED_NOW + timedelta(minutes=2),
+        )
+        before = tuple(connection.execute(
+            "SELECT state, contractor_id, updated_at FROM cases WHERE id = ?",
+            (context["case_id"],),
+        ).fetchone())
+        with pytest.raises(InvitationWorkflowError, match="invitation_unavailable"):
+            cancel_accepted_invitation_before_import(
+                connection,
+                context["case_id"],
+                issue.invitation_id,
+                context["owner_id"],
+                now=FIXED_NOW + timedelta(minutes=3),
+            )
+        after = tuple(connection.execute(
+            "SELECT state, contractor_id, updated_at FROM cases WHERE id = ?",
+            (context["case_id"],),
+        ).fetchone())
+        assert before == after
+        assert connection.execute(
+            "SELECT source_invalidated_at FROM invitations WHERE id = ?",
+            (issue.invitation_id,),
+        ).fetchone()[0] is None
+    finally:
+        connection.close()
 
 
 def test_nonidentical_contractor_import_rolls_back_every_workflow_change(demo_runtime) -> None:

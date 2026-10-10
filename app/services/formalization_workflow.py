@@ -8,9 +8,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.db import immediate_transaction
+from app.db import deferred_read_transaction, immediate_transaction
+from app.services.artifact_store import (
+    ArtifactStoreError,
+    MAX_JSON_ARTIFACT_BYTES,
+    read_verified,
+)
 from app.services.candidate_workflow import (
     CandidateWorkflowError,
+    _load_candidate_row,
     _load_verified_bundle,
 )
 from app.services.case_workflow import SECTION_KEYS
@@ -161,6 +167,46 @@ def _binding_values(row: sqlite3.Row) -> tuple[object, ...]:
     )
 
 
+def _active_context_token(row: sqlite3.Row, role: str) -> tuple[object, ...]:
+    return (
+        row["case_id"], row["owner_id"], row["contractor_id"], role,
+        row["case_state"], row["content_revision"], row["active_candidate_id"],
+        row["formal_candidate_id"], row["id"], row["state"], row["review_revision"],
+        row["round_id"], row["round_revision"], row["round_state"],
+        row["proposal_state"], row["quote_expires_at"], *_binding_values(row),
+    )
+
+
+def _verified_active_context(
+    connection: sqlite3.Connection,
+    data_root: Path,
+    assets: DocumentAssets,
+    case_id: str,
+    candidate_id: str,
+    actor_id: str,
+    *,
+    require_consent_ready: bool,
+) -> tuple[sqlite3.Row, str]:
+    with deferred_read_transaction(connection):
+        context, role = _active_context(
+            connection,
+            case_id,
+            candidate_id,
+            actor_id,
+            require_consent_ready=require_consent_ready,
+        )
+        candidate, _files = _load_verified_bundle(
+            connection, data_root, case_id, candidate_id, actor_id, assets
+        )
+        if (
+            candidate["id"] != context["id"]
+            or candidate["review_revision"] != context["round_revision"]
+            or _binding_values(candidate) != _binding_values(context)
+        ):
+            raise FormalizationWorkflowError("candidate_stale")
+        return context, role
+
+
 def _record_matches(row: sqlite3.Row, context: sqlite3.Row, actor_id: str, role: str) -> bool:
     return (
         row["case_id"] == context["case_id"]
@@ -169,6 +215,27 @@ def _record_matches(row: sqlite3.Row, context: sqlite3.Row, actor_id: str, role:
         and row["actor_role"] == role
         and _binding_values(row) == _binding_values(context)
     )
+
+
+def _unrenewed_withdrawn_confirmation(
+    connection: sqlite3.Connection,
+    round_id: str,
+    actor_id: str,
+    role: str,
+) -> sqlite3.Row | None:
+    rows = connection.execute(
+        "SELECT confirmation.id, confirmation.withdrawn_at "
+        "FROM candidate_confirmations AS confirmation "
+        "LEFT JOIN candidate_acknowledgement_renewals AS renewal "
+        "ON renewal.withdrawn_confirmation_id = confirmation.id "
+        "WHERE confirmation.round_id = ? AND confirmation.actor_id = ? "
+        "AND confirmation.actor_role = ? AND confirmation.state = 'WITHDRAWN' "
+        "AND renewal.id IS NULL LIMIT 2",
+        (round_id, actor_id, role),
+    ).fetchall()
+    if len(rows) > 1:
+        raise FormalizationWorkflowError("acknowledgement_conflict")
+    return rows[0] if rows else None
 
 
 def acknowledge_candidate(
@@ -180,13 +247,20 @@ def acknowledge_candidate(
     actor_id: str,
     expected_revision: int,
 ) -> bool:
+    verified, verified_role = _verified_active_context(
+        connection, data_root, assets, case_id, candidate_id, actor_id,
+        require_consent_ready=True,
+    )
     with immediate_transaction(connection):
         context, role = _active_context(
             connection, case_id, candidate_id, actor_id, require_consent_ready=True
         )
-        if context["round_revision"] != expected_revision:
+        if (
+            role != verified_role
+            or _active_context_token(context, role) != _active_context_token(verified, verified_role)
+            or context["round_revision"] != expected_revision
+        ):
             raise FormalizationWorkflowError("confirmation_stale")
-        _load_verified_bundle(connection, data_root, case_id, candidate_id, actor_id, assets)
         existing = connection.execute(
             "SELECT * FROM candidate_acknowledgements WHERE round_id = ? AND actor_role = ?",
             (context["round_id"], role),
@@ -194,7 +268,19 @@ def acknowledge_candidate(
         if existing is not None:
             if not _record_matches(existing, context, actor_id, role):
                 raise FormalizationWorkflowError("acknowledgement_conflict")
-            return False
+            withdrawn = _unrenewed_withdrawn_confirmation(
+                connection, context["round_id"], actor_id, role
+            )
+            if withdrawn is None:
+                return False
+            connection.execute(
+                "INSERT INTO candidate_acknowledgement_renewals("
+                "id, acknowledgement_id, withdrawn_confirmation_id, renewal_kind, renewed_at) "
+                "VALUES (?, ?, ?, 'EXPLICIT', ?)",
+                (str(uuid.uuid4()), existing["id"], withdrawn["id"], _now()),
+            )
+            _audit(connection, actor_id, case_id, candidate_id, "candidate_reacknowledged")
+            return True
         connection.execute(
             "INSERT INTO candidate_acknowledgements(id, round_id, case_id, candidate_id, actor_id, "
             "actor_role, manifest_artifact_id, manifest_sha256, manifest_byte_length, "
@@ -220,13 +306,20 @@ def confirm_candidate(
     actor_id: str,
     expected_revision: int,
 ) -> ConfirmationResult:
+    verified, verified_role = _verified_active_context(
+        connection, data_root, assets, case_id, candidate_id, actor_id,
+        require_consent_ready=True,
+    )
     with immediate_transaction(connection):
         context, role = _active_context(
             connection, case_id, candidate_id, actor_id, require_consent_ready=True
         )
-        if context["round_revision"] != expected_revision:
+        if (
+            role != verified_role
+            or _active_context_token(context, role) != _active_context_token(verified, verified_role)
+            or context["round_revision"] != expected_revision
+        ):
             raise FormalizationWorkflowError("confirmation_stale")
-        _load_verified_bundle(connection, data_root, case_id, candidate_id, actor_id, assets)
         acknowledgement = connection.execute(
             "SELECT * FROM candidate_acknowledgements WHERE round_id = ? AND actor_role = ?",
             (context["round_id"], role),
@@ -234,6 +327,11 @@ def confirm_candidate(
         if acknowledgement is None or not _record_matches(
             acknowledgement, context, actor_id, role
         ):
+            raise FormalizationWorkflowError("acknowledgement_required")
+        withdrawn = _unrenewed_withdrawn_confirmation(
+            connection, context["round_id"], actor_id, role
+        )
+        if withdrawn is not None:
             raise FormalizationWorkflowError("acknowledgement_required")
         existing = connection.execute(
             "SELECT * FROM candidate_confirmations WHERE round_id = ? AND actor_role = ? AND state = 'CURRENT'",
@@ -333,13 +431,20 @@ def withdraw_confirmation(
     actor_id: str,
     expected_revision: int,
 ) -> None:
+    verified, verified_role = _verified_active_context(
+        connection, data_root, assets, case_id, candidate_id, actor_id,
+        require_consent_ready=False,
+    )
     with immediate_transaction(connection):
         context, role = _active_context(
             connection, case_id, candidate_id, actor_id, require_consent_ready=False
         )
-        if context["round_revision"] != expected_revision:
+        if (
+            role != verified_role
+            or _active_context_token(context, role) != _active_context_token(verified, verified_role)
+            or context["round_revision"] != expected_revision
+        ):
             raise FormalizationWorkflowError("confirmation_stale")
-        _load_verified_bundle(connection, data_root, case_id, candidate_id, actor_id, assets)
         changed = connection.execute(
             "UPDATE candidate_confirmations SET state = 'WITHDRAWN', withdrawn_at = ? "
             "WHERE round_id = ? AND actor_id = ? AND actor_role = ? AND state = 'CURRENT'",
@@ -363,13 +468,20 @@ def request_candidate_revision(
     normalized_reason = reason.strip()
     if not 1 <= len(normalized_reason) <= 4000:
         raise FormalizationWorkflowError("revision_reason_required")
+    verified, verified_role = _verified_active_context(
+        connection, data_root, assets, case_id, candidate_id, actor_id,
+        require_consent_ready=False,
+    )
     with immediate_transaction(connection):
-        context, _role = _active_context(
+        context, role = _active_context(
             connection, case_id, candidate_id, actor_id, require_consent_ready=False
         )
-        if context["round_revision"] != expected_revision:
+        if (
+            role != verified_role
+            or _active_context_token(context, role) != _active_context_token(verified, verified_role)
+            or context["round_revision"] != expected_revision
+        ):
             raise FormalizationWorkflowError("confirmation_stale")
-        _load_verified_bundle(connection, data_root, case_id, candidate_id, actor_id, assets)
         now = _now()
         cleared = connection.execute(
             "UPDATE cases SET state = 'JSON_B_REVIEW', active_candidate_id = NULL, updated_at = ? "
@@ -405,6 +517,19 @@ def request_candidate_revision(
             ),
         ).rowcount != 3:
             raise FormalizationWorkflowError("candidate_stale")
+        issue_id = str(uuid.uuid4())
+        connection.execute(
+            "INSERT INTO case_issues(id, case_id, kind, summary, opened_by_id, "
+            "opened_by_role, state, revision, created_at, updated_at) "
+            "VALUES (?, ?, 'CLARIFICATION', ?, ?, ?, 'OPEN', 1, ?, ?)",
+            (issue_id, case_id, normalized_reason, actor_id, role, now, now),
+        )
+        connection.execute(
+            "INSERT INTO issue_events(id, issue_id, actor_id, actor_role, action, "
+            "from_state, to_state, note, issue_revision, server_created_at) "
+            "VALUES (?, ?, ?, ?, 'OPENED', NULL, 'OPEN', ?, 1, ?)",
+            (str(uuid.uuid4()), issue_id, actor_id, role, normalized_reason, now),
+        )
         _audit(connection, actor_id, case_id, candidate_id, "candidate_revision_requested")
 
 
@@ -431,22 +556,42 @@ def load_confirmation_view(
         (round_row["id"],),
     ).fetchall()
     confirmations = connection.execute(
-        "SELECT actor_role, actor_id, state, confirmed_at, withdrawn_at, invalidated_at, formalized_at "
+        "SELECT id, actor_role, actor_id, state, confirmed_at, withdrawn_at, invalidated_at, formalized_at "
         "FROM candidate_confirmations WHERE round_id = ? ORDER BY confirmed_at, id",
+        (round_row["id"],),
+    ).fetchall()
+    acknowledgement_renewals = connection.execute(
+        "SELECT renewal.id, renewal.acknowledgement_id, renewal.withdrawn_confirmation_id, "
+        "renewal.renewal_kind, renewal.renewed_at, acknowledgement.actor_id, acknowledgement.actor_role "
+        "FROM candidate_acknowledgement_renewals AS renewal "
+        "JOIN candidate_acknowledgements AS acknowledgement "
+        "ON acknowledgement.id = renewal.acknowledgement_id "
+        "WHERE acknowledgement.round_id = ? ORDER BY renewal.renewed_at, renewal.id",
+        (round_row["id"],),
+    ).fetchall()
+    unrenewed_confirmations = connection.execute(
+        "SELECT confirmation.id, confirmation.actor_role, confirmation.actor_id, "
+        "confirmation.state, confirmation.confirmed_at, confirmation.withdrawn_at, "
+        "confirmation.invalidated_at, confirmation.formalized_at "
+        "FROM candidate_confirmations AS confirmation "
+        "LEFT JOIN candidate_acknowledgement_renewals AS renewal "
+        "ON renewal.withdrawn_confirmation_id = confirmation.id "
+        "WHERE confirmation.round_id = ? AND confirmation.state = 'WITHDRAWN' "
+        "AND renewal.id IS NULL",
         (round_row["id"],),
     ).fetchall()
     return {
         "candidate": candidate,
         "round": round_row,
         "acknowledgements": acknowledgements,
+        "acknowledgement_renewals": acknowledgement_renewals,
+        "unrenewed_confirmations": unrenewed_confirmations,
         "confirmations": confirmations,
     }
 
 
-def load_formal_version(
+def _load_formal_db_view(
     connection: sqlite3.Connection,
-    data_root: Path,
-    assets: DocumentAssets,
     case_id: str,
     actor_id: str,
 ) -> dict[str, object]:
@@ -464,9 +609,12 @@ def load_formal_version(
         or case["owner_id"] == case["contractor_id"]
     ):
         raise FormalizationWorkflowError("formal_unavailable")
-    candidate, files = _load_verified_bundle(
-        connection, data_root, case_id, case["formal_candidate_id"], actor_id, assets
-    )
+    try:
+        candidate = _load_candidate_row(
+            connection, case_id, case["formal_candidate_id"], actor_id
+        )
+    except CandidateWorkflowError as error:
+        raise FormalizationWorkflowError("formal_integrity_invalid") from error
     round_row = connection.execute(
         "SELECT * FROM candidate_review_rounds WHERE candidate_id = ? AND state = 'FORMALIZED'",
         (candidate["id"],),
@@ -479,6 +627,20 @@ def load_formal_version(
     confirmations = connection.execute(
         "SELECT * FROM candidate_confirmations "
         "WHERE round_id = ? AND state = 'FORMALIZED' ORDER BY actor_role",
+        (candidate["id"],),
+    ).fetchall()
+    withdrawn_confirmations = connection.execute(
+        "SELECT id, actor_id, actor_role FROM candidate_confirmations "
+        "WHERE round_id = ? AND state = 'WITHDRAWN' ORDER BY confirmed_at, id",
+        (candidate["id"],),
+    ).fetchall()
+    acknowledgement_renewals = connection.execute(
+        "SELECT renewal.id, renewal.acknowledgement_id, renewal.withdrawn_confirmation_id, "
+        "renewal.renewal_kind, renewal.renewed_at, acknowledgement.actor_id, acknowledgement.actor_role "
+        "FROM candidate_acknowledgement_renewals AS renewal "
+        "JOIN candidate_acknowledgements AS acknowledgement "
+        "ON acknowledgement.id = renewal.acknowledgement_id "
+        "WHERE acknowledgement.round_id = ? ORDER BY renewal.renewed_at, renewal.id",
         (candidate["id"],),
     ).fetchall()
     expected_parties = {"client": case["owner_id"], "contractor": case["contractor_id"]}
@@ -510,16 +672,161 @@ def load_formal_version(
             for row in confirmations
         )
     )
-    if not round_matches or not acknowledgements_match or not confirmations_match:
+    acknowledgement_ids = {
+        (row["actor_id"], row["actor_role"]): row["id"] for row in acknowledgements
+    }
+    withdrawn_parties = {
+        row["id"]: (row["actor_id"], row["actor_role"])
+        for row in withdrawn_confirmations
+    }
+    renewals_match = (
+        len(acknowledgement_renewals) == len(withdrawn_confirmations)
+        and {row["withdrawn_confirmation_id"] for row in acknowledgement_renewals}
+        == set(withdrawn_parties)
+        and all(
+            acknowledgement_ids.get(withdrawn_parties[row["withdrawn_confirmation_id"]])
+            == row["acknowledgement_id"]
+            for row in acknowledgement_renewals
+        )
+    )
+    if (
+        not round_matches
+        or not acknowledgements_match
+        or not confirmations_match
+        or not renewals_match
+    ):
         raise FormalizationWorkflowError("formal_integrity_invalid")
     return {
         "case": case,
         "candidate": candidate,
         "round": round_row,
         "acknowledgements": acknowledgements,
+        "acknowledgement_renewals": acknowledgement_renewals,
         "confirmations": confirmations,
-        "files": files,
     }
+
+
+def _formal_snapshot_token(view: dict[str, object]) -> tuple[object, ...]:
+    case = view["case"]
+    candidate = view["candidate"]
+    round_row = view["round"]
+    acknowledgements = view["acknowledgements"]
+    acknowledgement_renewals = view["acknowledgement_renewals"]
+    confirmations = view["confirmations"]
+    case_token = (
+        case["id"], case["owner_id"], case["contractor_id"], case["title"],
+        case["state"], case["active_candidate_id"], case["formal_candidate_id"],
+    )
+    candidate_token = (
+        candidate["id"], candidate["case_id"], candidate["version_no"],
+        candidate["state"], candidate["review_revision"], *_binding_values(candidate),
+    )
+    round_token = (
+        round_row["id"], round_row["case_id"], round_row["candidate_id"],
+        round_row["revision"], round_row["state"], round_row["manifest_sha256"],
+        round_row["pdf_sha256"], round_row["svg_sha256"],
+        round_row["json_a_sha256"], round_row["json_b_sha256"],
+    )
+    acknowledgement_token = tuple(
+        (
+            row["id"], row["actor_id"], row["actor_role"],
+            *_binding_values(row), row["acknowledged_at"],
+        )
+        for row in acknowledgements
+    )
+    acknowledgement_renewal_token = tuple(
+        (
+            row["id"], row["acknowledgement_id"], row["withdrawn_confirmation_id"],
+            row["renewal_kind"], row["actor_id"], row["actor_role"], row["renewed_at"],
+        )
+        for row in acknowledgement_renewals
+    )
+    confirmation_token = tuple(
+        (
+            row["id"], row["actor_id"], row["actor_role"], row["state"],
+            *_binding_values(row), row["confirmed_at"], row["formalized_at"],
+        )
+        for row in confirmations
+    )
+    return (
+        case_token,
+        candidate_token,
+        round_token,
+        acknowledgement_token,
+        acknowledgement_renewal_token,
+        confirmation_token,
+    )
+
+
+def revalidate_formal_snapshot(
+    connection: sqlite3.Connection,
+    case_id: str,
+    actor_id: str,
+    expected: dict[str, object],
+) -> dict[str, object]:
+    current = _load_formal_db_view(connection, case_id, actor_id)
+    if _formal_snapshot_token(current) != _formal_snapshot_token(expected):
+        raise FormalizationWorkflowError("formal_integrity_invalid")
+    return current
+
+
+def load_formal_version(
+    connection: sqlite3.Connection,
+    data_root: Path,
+    assets: DocumentAssets,
+    case_id: str,
+    actor_id: str,
+) -> dict[str, object]:
+    view = _load_formal_db_view(connection, case_id, actor_id)
+    candidate, files = _load_verified_bundle(
+        connection, data_root, case_id, view["case"]["formal_candidate_id"], actor_id, assets
+    )
+    if _binding_values(candidate) != _binding_values(view["candidate"]):
+        raise FormalizationWorkflowError("formal_integrity_invalid")
+    return {**view, "candidate": candidate, "files": files}
+
+
+def read_formal_source(
+    connection: sqlite3.Connection,
+    data_root: Path,
+    assets: DocumentAssets,
+    case_id: str,
+    actor_id: str,
+    source_kind: str,
+) -> tuple[sqlite3.Row, bytes]:
+    source_contracts = {
+        "json_a": ("json_a_artifact_id", "json_a_sha256", "json_a_byte_length"),
+        "json_b": ("json_b_artifact_id", "json_b_sha256", "json_b_byte_length"),
+    }
+    contract = source_contracts.get(source_kind)
+    if contract is None:
+        raise FormalizationWorkflowError("formal_unavailable")
+    formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
+    candidate = formal["candidate"]
+    artifact_id_column, sha_column, length_column = contract
+    artifact = connection.execute(
+        "SELECT id, relative_path, sha256, byte_length FROM artifacts "
+        "WHERE id = ? AND case_id = ? AND kind = ? "
+        "AND visibility = 'party_only' AND lifecycle = 'formal'",
+        (candidate[artifact_id_column], case_id, source_kind),
+    ).fetchone()
+    if (
+        artifact is None
+        or artifact["sha256"] != candidate[sha_column]
+        or artifact["byte_length"] != candidate[length_column]
+    ):
+        raise FormalizationWorkflowError("formal_integrity_invalid")
+    try:
+        raw = read_verified(
+            data_root,
+            artifact["relative_path"],
+            artifact["sha256"],
+            artifact["byte_length"],
+            max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
+    except (ArtifactStoreError, OSError, ValueError) as error:
+        raise FormalizationWorkflowError("formal_integrity_invalid") from error
+    return artifact, raw
 
 
 def create_separate_proposal(

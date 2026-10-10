@@ -1,47 +1,66 @@
 {% extends 'base.html' %}
+{% from '_ui.html' import human_value, workflow_context_bar with context %}
 {% block title %}{{ tr('page.json_b_review') }} · {{ tr('app.name') }}{% endblock %}
 {% block content %}
-<section class="card stack">
+{% set proposal_status = ui('proposal_review', 'previous') if review.state != 'CURRENT' else ('Saved proposal' if case.state == 'FORMAL' else (ui('proposal_review', 'status_ready') if case.active_candidate_id else ui('proposal_review', 'status_review'))) %}
+{% if case.state == 'FORMAL' %}{% set proposal_task = 'Open confirmed agreement' %}
+{% elif review.state != 'CURRENT' %}{% set proposal_task = ui('proposal_review', 'task_previous') %}
+{% elif case.active_candidate_id %}{% set proposal_task = ui('proposal_review', 'task_open_confirmation') %}
+{% elif case.state == 'JSON_B_PRIVATE_DRAFT' %}{% set proposal_task = ui('proposal_review', 'continue_revision') if case_role == 'contractor' else ui('proposal_review', 'task_wait_revision') %}
+{% elif case.state == 'JSON_B_REVIEW' and case_role == 'client' %}{% set proposal_task = ui('proposal_review', 'task_client') %}
+{% elif case.state == 'JSON_B_REVIEW' and quote_expired %}{% set proposal_task = 'Revise the expired proposal' %}
+{% elif case.state == 'JSON_B_REVIEW' and has_blocking_issues %}{% set proposal_task = ui('proposal_review', 'task_blocked') %}
+{% elif case.state == 'JSON_B_REVIEW' %}{% set proposal_task = ui('proposal_review', 'task_contractor') %}
+{% else %}{% set proposal_task = ui('proposal_review', 'task_previous') %}{% endif %}
+{{ workflow_context_bar(tr('role.owner') if case_role == 'client' else tr('role.contractor'), case.state, proposal_status, proposal_task) }}
+<section class="card stack proposal-review-page">
   <header class="section-heading">
-    <div><p class="eyebrow">{{ tr('document.json_b') }}</p><h1>{{ tr('page.json_b_review') }} {{ review.version_no }}</h1></div>
-    <span class="status-chip">{{ review.state }}</span>
+    <div><p class="eyebrow">{{ ui('proposal_review', 'eyebrow') }}</p><h1>{{ ui('proposal_review', 'title', version_no=review.version_no) }}</h1></div>
+    <span class="status-chip">{{ ui('proposal_review', 'current') if review.state == 'CURRENT' else ui('proposal_review', 'previous') }}</span>
   </header>
-  <p>{{ tr('notice.json_b_review_read_only') }}</p>
-  <dl class="identity-grid">
-    <div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ review.sha256 }}</code></dd></div>
-    <div><dt>{{ tr('field.quote_expiry') }}</dt><dd>{{ review.quote_expires_at }}</dd></div>
-  </dl>
-  <p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/download">{{ tr('action.download_json_b') }}</a></p>
-  <div class="stack" aria-label="{{ tr('page.json_b_review') }}">
+  <p>{{ ui('proposal_review', 'saved_notice') if case_role == 'client' and review.state == 'CURRENT' and case.state in ('JSON_B_REVIEW', 'JSON_B_PRIVATE_DRAFT') else ui('proposal_review', 'read_only_notice') }}</p>
+  <p><strong>{{ tr('field.quote_expiry') }}:</strong> {{ review.quote_expires_at }}</p>
+  <p><a class="button button-secondary" href="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/download">{{ ui('proposal_review', 'download') }}</a></p>
+  <div class="proposal-actions">
+  {% if quote_expired and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' %}<p class="notice notice-warning">This quote has expired. Revise the proposal and choose a new expiry before creating a confirmation version.</p>{% endif %}
+  {% if case_role == 'contractor' and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' and not has_blocking_issues and not quote_expired %}
+  <form method="post" action="/{{ locale }}/cases/{{ case.id }}/candidates">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button data-ui="primary-action">{{ ui('proposal_review', 'create_confirmation') }}</button>
+  </form>
+  {% endif %}
+  {% if case_role == 'contractor' and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' %}
+  <form method="post" action="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/revise">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button{% if has_blocking_issues or quote_expired %} data-ui="primary-action"{% else %} class="button-secondary"{% endif %}>{{ ui('proposal_review', 'revise') }}</button>
+  </form>
+  {% endif %}
+  {% if case.active_candidate_id %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/candidates/{{ case.active_candidate_id }}">{{ tr('action.open_candidate') }}</a></p>{% endif %}
+  {% if case_role == 'contractor' and review.state == 'CURRENT' and case.state == 'JSON_B_PRIVATE_DRAFT' %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/json-b/draft">{{ ui('proposal_review', 'continue_revision') }}</a></p>{% endif %}
+  {% if case.state == 'FORMAL' %}<p><a class="button button-primary" data-ui="primary-action" href="/{{ locale }}/cases/{{ case.id }}/formal">Open Confirmed Agreement</a></p>{% endif %}
+  </div>
+  <div class="proposal-field-grid" aria-label="{{ tr('page.json_b_review') }}">
     {% for field in review_fields %}
-    <section class="data-panel stack" data-review-field="{{ field.key }}">
-      <h2>{{ tr(field.label_key) }}</h2>
-      <pre data-user-content>{{ field.value|tojson(indent=2) }}</pre>
-      {% if case_role == 'client' and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' %}
+    <details class="guided-step" data-review-field="{{ field.key }}">
+      <summary>{{ tr(field.label_key) }}</summary>
+      <section class="data-panel stack">
+      <div class="proposal-readable" data-user-content>{{ human_value(field.value, field.key, true) }}</div>
+      {% if case_role == 'client' and review.state == 'CURRENT' and case.state in ('JSON_B_REVIEW', 'JSON_B_PRIVATE_DRAFT') %}
       <details>
         <summary>{{ tr('action.raise_objection') }}</summary>
         <form method="post" action="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/objections" class="stack">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="field_pointer" value="{{ field.pointer }}">
           <label>{{ tr('field.objection_summary') }}<textarea name="summary" required></textarea></label>
-          <button>{{ tr('action.raise_objection') }}</button>
+          <button class="button-secondary">{{ tr('action.raise_objection') }}</button>
         </form>
       </details>
       {% endif %}
-    </section>
+      </section>
+    </details>
     {% endfor %}
   </div>
-  {% if case_role == 'contractor' and review.state == 'CURRENT' and case.state == 'JSON_B_REVIEW' %}
-  <form method="post" action="/{{ locale }}/cases/{{ case.id }}/candidates">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button>{{ tr('action.create_candidate') }}</button>
-  </form>
-  <form method="post" action="/{{ locale }}/cases/{{ case.id }}/json-b/reviews/{{ review.version_no }}/revise">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button>{{ tr('action.request_revision') }}</button>
-  </form>
-  {% endif %}
-  {% if case.active_candidate_id %}<p><a class="button" href="/{{ locale }}/cases/{{ case.id }}/candidates/{{ case.active_candidate_id }}">{{ tr('action.open_candidate') }}</a></p>{% endif %}
+  <details class="technical-disclosure"><summary>{{ ui('proposal_review', 'verify') }}</summary><dl class="identity-grid"><div><dt>{{ tr('field.sha256') }}</dt><dd class="hash"><code>{{ review.sha256 }}</code></dd></div><div><dt>{{ tr('field.quote_expiry') }}</dt><dd>{{ review.quote_expires_at }}</dd></div></dl></details>
   <p><a href="/{{ locale }}/cases/{{ case.id }}">{{ tr('action.open_private_case') }}</a></p>
 </section>
 {% endblock %}

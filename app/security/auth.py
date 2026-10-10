@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from enum import Enum
 from typing import Callable
 
 from flask import g, session
@@ -10,8 +11,15 @@ from app.db import get_db
 
 
 KDF_CONCURRENCY_LIMIT = 2
+KDF_RETRY_AFTER_SECONDS = 1
 _KDF_SLOTS = threading.BoundedSemaphore(KDF_CONCURRENCY_LIMIT)
 DUMMY_PASSWORD_HASH = generate_password_hash("not-a-real-account-password", method="scrypt")
+
+
+class PasswordVerification(Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    BUSY = "busy"
 
 
 def hash_password(password: str) -> str:
@@ -23,17 +31,21 @@ def hash_password(password: str) -> str:
         _KDF_SLOTS.release()
 
 
-def verify_password(stored_hash: str | None, candidate: str) -> bool:
+def verify_password(stored_hash: str | None, candidate: str) -> PasswordVerification:
     target = stored_hash if stored_hash else DUMMY_PASSWORD_HASH
     if not _KDF_SLOTS.acquire(blocking=False):
-        return False
+        return PasswordVerification.BUSY
     try:
         verified = check_password_hash(target, candidate)
-    except (ValueError, MemoryError):
-        return False
+    except MemoryError:
+        return PasswordVerification.BUSY
+    except ValueError:
+        return PasswordVerification.INVALID
     finally:
         _KDF_SLOTS.release()
-    return bool(stored_hash) and verified
+    if stored_hash and verified:
+        return PasswordVerification.VALID
+    return PasswordVerification.INVALID
 
 
 def load_current_user() -> None:
@@ -63,4 +75,5 @@ def current_user_required(handler: Callable[..., object]) -> Callable[..., objec
             abort(401, description="error.session_expired")
         return handler(*args, **kwargs)
 
+    wrapped.requires_authenticated_user = True
     return wrapped

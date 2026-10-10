@@ -68,3 +68,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Private production handoff; public guide is separately allowlisted
+/devpost/demo-capture-master.md

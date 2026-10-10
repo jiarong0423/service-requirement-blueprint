@@ -15,7 +15,7 @@
     <p class="eyebrow">Post-build reference</p>
     <h1>Service Requirement Blueprint</h1>
     <p>A local English-only proof of concept that helps one client and one contractor turn requirements into a fixed agreement, record delivery and explicit acceptance, and export verifiable evidence without exposing private drafts.</p>
-    <p class="muted">Functional source: responsive implementation commit <code>e7b7306</code>; this offline map was added in <code>c182197</code>. Later 6-ship commits update documentation, licensing, and release evidence without changing the mapped delivery workflow.</p>
+    <p class="muted">This code map records the earlier P1 repair checkpoint <code>f0cc808</code> and its 283-test regression as historical evidence. For a new review package, use its generated <code>public-export-manifest.json</code> to identify the exact source commit and file hashes; run the regression again for that commit. Recording readiness remains a separate browser gate.</p>
   </header>
 
   <section class="panel wide" aria-labelledby="flow-heading">
@@ -52,7 +52,7 @@
         <li><strong>Workflow services:</strong> <code>app/services/</code> owns permission checks, transactions, immutable versions, candidate/formal evidence, delivery, and export verification.</li>
         <li><strong>Database:</strong> <code>migrations/</code> defines append-only rows and transition guards in local SQLite.</li>
         <li><strong>Controlled files:</strong> the runtime instance stores exact JSON, PDF, SVG, delivery, and evidence ZIP bytes outside Git.</li>
-        <li><strong>Presentation:</strong> <code>app/templates/</code>, <code>app/static/css/app.css</code>, and <code>app/i18n/catalog.en.json</code> render the English interface without owning business authority.</li>
+        <li><strong>Presentation:</strong> <code>app/presentation.py</code>, <code>app/presentation_semantics.py</code>, <code>app/templates/</code>, <code>app/static/css/app.css</code>, and <code>app/i18n/catalog.en.json</code> render the English interface without owning business authority.</li>
       </ul>
     </section>
 

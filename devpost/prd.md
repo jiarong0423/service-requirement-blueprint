@@ -12,7 +12,7 @@ Help small-business clients and independent website contractors turn vague priva
 
 1. The client signs in and opens the requirement guide.
 2. The client completes eight focused sections while viewing progress and a live blueprint.
-3. The review screen identifies decided items, unresolved items, conflicts, omissions, and risks. When valid, the client generates and downloads JSON A.
+3. The review screen shows the saved requirement summary and unresolved selections. When valid, the client generates and downloads JSON A.
 4. The client creates an invitation-only private case and invites one approved contractor.
 5. The contractor accepts the invitation and imports the exact JSON A registered for the case.
 6. Both parties use JSON A as the read-only requirement baseline and resolve open issues in the case room.
@@ -49,7 +49,7 @@ Each section supports structured choices, text, and an explicit undecided or con
 
 ### Requirement Review and JSON A
 
-The review screen shows the project purpose, users, pages, primary flow, included and excluded features, data roles, third-party services, asset responsibilities, maintenance expectations, acceptance expectations, and unresolved items.
+The review screen shows the project purpose, user groups and core actions, pages, feature decisions, data categories and access, external service and asset states, ownership and maintenance expectations, acceptance expectations, and unresolved selections. Supporting details are grouped in a collapsible readable section.
 
 JSON A is generated only when all required sections are complete and there is no blocking contradiction. It is a discussion baseline, not a quote, contract, or bilateral confirmation. Every generated version is stored once, hashed with SHA-256, and never overwritten. The client downloads the stored bytes; the server does not reserialize the document for each request.
 
@@ -83,7 +83,7 @@ The fixed PDF uses lifecycle-neutral wording. Candidate, invalidated, and formal
 
 Before JSON A or a JSON B review version is fixed, the server checks every document character against the pinned embedded font set. Supported user text is preserved exactly and is never translated. Unsupported characters are rejected with a clear validation error, so a case cannot reach candidate review with text that the fixed PDF cannot render.
 
-Each party must review and acknowledge the same candidate manifest, PDF digest, SVG digest, JSON A digest, and JSON B digest. One confirmation leaves the case pending. A party may withdraw before formalization. A requested revision invalidates the round and returns work to JSON B.
+Each party must review and acknowledge the same candidate manifest, PDF digest, SVG digest, JSON A digest, and JSON B digest. One confirmation leaves the case pending. A party may withdraw before formalization. After withdrawal, that party must explicitly re-acknowledge the unchanged fixed candidate before confirming it again; every withdrawal starts a new acknowledgement cycle. A requested revision invalidates the round and returns work to JSON B.
 
 Two current confirmations from different bound roles formalize the existing candidate inside one database transaction. Formalization changes authoritative state only; it does not regenerate, copy, move, or replace the reviewed files.
 
@@ -141,7 +141,7 @@ Abnormal and terminal states include rejected, revoked, expired, superseded, inv
 
 - Server-side SQLite data determines account status, roles, case bindings, revisions, and confirmation validity.
 - Passwords use scrypt hashes; no default or plaintext password is stored.
-- Signed Flask session cookies contain only user ID, session version, and CSRF nonce.
+- Signed-in Flask session cookies contain the user ID, session version, and CSRF nonce. A signed-out invitation handoff may briefly contain an invitation ID, which is cleared during sign-in.
 - Login and logout clear the previous session and rotate the nonce.
 - Every state-changing request is POST with CSRF validation.
 - Every protected read rechecks account and case authority.
@@ -220,7 +220,7 @@ The immutable candidate increment is ready when:
 The bilateral same-byte formalization increment is ready when:
 
 - each bound role explicitly acknowledges the same manifest, PDF, SVG, JSON A, and JSON B artifact identities, lengths, and SHA-256 values before confirming;
-- one current role confirmation leaves the case pending, may be withdrawn before formalization, and never becomes bilateral consent through silence, delay, or quote expiry;
+- one current role confirmation leaves the case pending, may be withdrawn before formalization, and never becomes bilateral consent through silence, delay, or quote expiry; every withdrawal requires a new append-only acknowledgement-renewal event before that role can confirm again;
 - two current confirmations from the distinct bound client and contractor roles formalize the same current candidate inside one `BEGIN IMMEDIATE` transaction;
 - formalization changes only SQLite authority and artifact lifecycle metadata; it does not render, copy, move, replace, or rewrite the manifest, PDF, SVG, JSON A, or JSON B bytes;
 - a required revision invalidates the round, current confirmations, candidate, and candidate files, preserves their history, and returns the case to JSON B review;

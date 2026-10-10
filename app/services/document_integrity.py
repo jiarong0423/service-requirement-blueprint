@@ -8,11 +8,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-import pypdfium2 as pdfium
 from fontTools.ttLib import TTFont as FontToolsTTFont
 from pypdf import PdfReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont as ReportLabTTFont
+
+from app.services.pdfium_runtime import render_pdf_images
 
 
 class DocumentIntegrityError(RuntimeError):
@@ -245,13 +246,16 @@ def validate_candidate_pdf(raw: bytes, required_text: tuple[str, ...] = ()) -> N
         raise DocumentIntegrityError("pdf_parse_failed") from error
 
     try:
-        document = pdfium.PdfDocument(raw)
-        for index in range(len(document)):
-            image = document[index].render(scale=1.0).to_pil().convert("RGB")
-            pixels = image.get_flattened_data()
-            nonwhite = sum(1 for red, green, blue in pixels if min(red, green, blue) < 248)
-            if nonwhite / (image.width * image.height) < 0.001:
-                raise DocumentIntegrityError("pdf_raster_blank")
+        images = render_pdf_images(raw, scale=1.0)
+        try:
+            for image in images:
+                pixels = image.get_flattened_data()
+                nonwhite = sum(1 for red, green, blue in pixels if min(red, green, blue) < 248)
+                if nonwhite / (image.width * image.height) < 0.001:
+                    raise DocumentIntegrityError("pdf_raster_blank")
+        finally:
+            for image in images:
+                image.close()
     except DocumentIntegrityError:
         raise
     except Exception as error:

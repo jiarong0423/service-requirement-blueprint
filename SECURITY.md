@@ -10,7 +10,7 @@ The local operator owns all demonstration credentials and the Flask signing key.
 
 - Demonstration passwords enter the process through the three documented environment-variable names. They have no default values and are stored only as password hashes in the ignored local SQLite database.
 - The Flask signing key is generated in the ignored `instance/secret.key` file with owner-only permissions.
-- Sessions contain only a user ID, session version, and CSRF nonce. Roles, case IDs, email addresses, and case content are loaded from SQLite for each authorized operation.
+- Signed-in sessions contain a user ID, session version, and CSRF nonce. A signed-out invitation handoff may briefly store an invitation ID until sign-in. Roles, case IDs, email addresses, and case content are loaded from SQLite for each authorized operation.
 - No provider keys, OAuth credentials, payment credentials, or cloud service accounts are required.
 
 ## Rotation and Revocation

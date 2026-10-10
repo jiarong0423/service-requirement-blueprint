@@ -4,6 +4,7 @@ import io
 import re
 import uuid
 
+from app import create_app
 from app.db import connect_database
 from app.security.auth import hash_password
 from app.services.case_workflow import utc_now
@@ -54,7 +55,9 @@ def _generate_owner_json_a(owner, instance_root):
     return case_id, revision, artifact_data, raw
 
 
-def _create_route_invitation(owner, case_id: str, revision: int, raw: bytes) -> tuple[str, str]:
+def _create_route_invitation(
+    owner, case_id: str, revision: int, raw: bytes, *, contractor_email: str = "contractor@example.test"
+) -> tuple[str, str]:
     preview = owner.post(
         f"/en/owner/requirements/{case_id}/publish/preview",
         data={
@@ -64,13 +67,13 @@ def _create_route_invitation(owner, case_id: str, revision: int, raw: bytes) -> 
         },
     )
     assert preview.status_code == 200
-    assert b"matches the currently registered JSON A" in preview.data
+    assert b"matches the currently saved requirement" in preview.data
     created = owner.post(
         f"/en/owner/requirements/{case_id}/invitations",
         data={
             "csrf_token": csrf(owner),
             "expected_revision": str(revision),
-            "contractor_email": "contractor@example.test",
+            "contractor_email": contractor_email,
             "json_a_file": (io.BytesIO(raw), "requirements.json"),
         },
     )
@@ -87,7 +90,12 @@ def test_route_journey_binds_designated_contractor_and_reuses_exact_bytes(demo_r
     invitation_id, code = _create_route_invitation(owner, case_id, revision, raw)
 
     contractor = app.test_client()
-    assert login(contractor, "en", "contractor@example.test", passwords["contractor"]).status_code == 302
+    signed_out = contractor.get(f"/en/invitations/{invitation_id}")
+    assert signed_out.status_code == 302
+    assert signed_out.location.endswith("/en/login")
+    signed_in = login(contractor, "en", "contractor@example.test", passwords["contractor"])
+    assert signed_in.status_code == 302
+    assert signed_in.location.endswith(f"/en/invitations/{invitation_id}")
     invitation = contractor.get(f"/en/invitations/{invitation_id}")
     assert invitation.status_code == 200
     assert raw not in invitation.data
@@ -97,6 +105,9 @@ def test_route_journey_binds_designated_contractor_and_reuses_exact_bytes(demo_r
     )
     assert accepted.status_code == 302
     assert accepted.location.endswith(f"/en/cases/{case_id}/json-a/import")
+    accepted_invitation = contractor.get(f"/en/invitations/{invitation_id}")
+    assert accepted_invitation.status_code == 200
+    assert f'href="/en/cases/{case_id}/json-a/import"'.encode() in accepted_invitation.data
 
     assert contractor.get(f"/en/cases/{case_id}").status_code == 404
     assert contractor.get(f"/en/cases/{case_id}/json-a/download").status_code == 404
@@ -142,6 +153,159 @@ def test_route_journey_binds_designated_contractor_and_reuses_exact_bytes(demo_r
         assert tuple(stored_artifact) == ("party_only", artifact["sha256"], artifact["byte_length"])
     finally:
         connection.close()
+
+
+def test_owner_closes_accepted_invitation_before_import_and_can_reissue(demo_runtime) -> None:
+    app, instance_root, passwords, owner, case_id, revision, _artifact, raw = _prepare_owner_json_a(demo_runtime)
+    invitation_id, code = _create_route_invitation(owner, case_id, revision, raw)
+    contractor = app.test_client()
+    assert login(contractor, "en", "contractor@example.test", passwords["contractor"]).status_code == 302
+    accepted = contractor.post(
+        f"/en/invitations/{invitation_id}/accept",
+        data={"csrf_token": csrf(contractor), "invitation_code": code},
+    )
+    assert accepted.status_code == 302
+
+    close_path = f"/en/owner/requirements/{case_id}/invitations/{invitation_id}/cancel-before-import"
+    owner_page = owner.get(f"/en/owner/requirements/{case_id}/publish")
+    assert owner_page.status_code == 200
+    assert close_path.encode() in owner_page.data
+    assert b"Close Invitation Before Import" in owner_page.data
+
+    missing_csrf = owner.post(close_path)
+    assert missing_csrf.status_code == 400
+    wrong_party = contractor.post(
+        close_path,
+        data={"csrf_token": csrf(contractor), "expected_revision": str(revision)},
+    )
+    assert wrong_party.status_code == 404
+
+    stale_revision = owner.post(
+        close_path,
+        data={"csrf_token": csrf(owner), "expected_revision": str(revision - 1)},
+    )
+    assert stale_revision.status_code == 409
+    closed = owner.post(
+        close_path,
+        data={"csrf_token": csrf(owner), "expected_revision": str(revision)},
+    )
+    assert closed.status_code == 302
+    assert closed.location.endswith(f"/en/owner/requirements/{case_id}/publish")
+    owner_after = owner.get(closed.location)
+    assert owner_after.status_code == 200
+    assert b"Invitation Closed" in owner_after.data
+    assert b'name="json_a_file"' in owner_after.data
+    assert close_path.encode() not in owner_after.data
+
+    stale = contractor.get(f"/en/invitations/{invitation_id}")
+    assert stale.status_code == 200
+    assert b"Invitation Closed" in stale.data
+    assert f"/en/cases/{case_id}/json-a/import".encode() not in stale.data
+    assert contractor.get(f"/en/cases/{case_id}/json-a/import").status_code == 404
+    assert contractor.post(
+        f"/en/cases/{case_id}/json-a/import",
+        data={
+            "csrf_token": csrf(contractor),
+            "expected_revision": str(revision),
+            "json_a_file": (io.BytesIO(raw), "requirements.json"),
+        },
+    ).status_code == 404
+
+    replacement_id, _replacement_code = _create_route_invitation(owner, case_id, revision, raw)
+    assert replacement_id != invitation_id
+
+
+def test_closed_invitee_cannot_see_reissued_case_progress(demo_runtime) -> None:
+    app, instance_root, passwords, owner, case_id, revision, _artifact, raw = _prepare_owner_json_a(demo_runtime)
+    old_invitation_id, old_code = _create_route_invitation(owner, case_id, revision, raw)
+    former_contractor = app.test_client()
+    assert login(former_contractor, "en", "contractor@example.test", passwords["contractor"]).status_code == 302
+    accepted = former_contractor.post(
+        f"/en/invitations/{old_invitation_id}/accept",
+        data={"csrf_token": csrf(former_contractor), "invitation_code": old_code},
+    )
+    assert accepted.status_code == 302
+    closed = owner.post(
+        f"/en/owner/requirements/{case_id}/invitations/{old_invitation_id}/cancel-before-import",
+        data={"csrf_token": csrf(owner), "expected_revision": str(revision)},
+    )
+    assert closed.status_code == 302
+
+    replacement_email = "replacement@example.test"
+    replacement_password = "replacement-test-password"
+    connection = connect_database(instance_root / "app.sqlite3")
+    try:
+        now = utc_now()
+        connection.execute(
+            "INSERT INTO users(id, email_normalized, display_name, password_hash, system_role, status, "
+            "session_version, created_at, updated_at) VALUES (?, ?, 'Replacement Contractor', ?, "
+            "'member', 'active', 1, ?, ?)",
+            (str(uuid.uuid4()), replacement_email, hash_password(replacement_password), now, now),
+        )
+    finally:
+        connection.close()
+
+    replacement_id, replacement_code = _create_route_invitation(
+        owner, case_id, revision, raw, contractor_email=replacement_email
+    )
+    replacement = app.test_client()
+    assert login(replacement, "en", replacement_email, replacement_password).status_code == 302
+    assert replacement.post(
+        f"/en/invitations/{replacement_id}/accept",
+        data={"csrf_token": csrf(replacement), "invitation_code": replacement_code},
+    ).status_code == 302
+    assert replacement.post(
+        f"/en/cases/{case_id}/json-a/import",
+        data={
+            "csrf_token": csrf(replacement),
+            "expected_revision": str(revision),
+            "json_a_file": (io.BytesIO(raw), "requirements.json"),
+        },
+    ).status_code == 302
+
+    current_page = replacement.get(f"/en/invitations/{replacement_id}")
+    assert current_page.status_code == 200
+    assert b'data-ui="status">Quote' in current_page.data
+
+    old_page = former_contractor.get(f"/en/invitations/{old_invitation_id}")
+    assert old_page.status_code == 200
+    assert b'data-ui="status">Clarify' in old_page.data
+    assert b'Invitation Closed' in old_page.data
+    assert b'data-ui="status">Quote' not in old_page.data
+    assert f'href="/en/cases/{case_id}"'.encode() not in old_page.data
+    assert former_contractor.get(f"/en/cases/{case_id}").status_code == 404
+
+
+def test_closed_invitee_cannot_see_later_title_edit(demo_runtime) -> None:
+    app, _instance_root, passwords, owner, case_id, revision, _artifact, raw = _prepare_owner_json_a(demo_runtime)
+    invitation_id, code = _create_route_invitation(owner, case_id, revision, raw)
+    former_contractor = app.test_client()
+    assert login(former_contractor, "en", "contractor@example.test", passwords["contractor"]).status_code == 302
+    assert former_contractor.post(
+        f"/en/invitations/{invitation_id}/accept",
+        data={"csrf_token": csrf(former_contractor), "invitation_code": code},
+    ).status_code == 302
+    assert owner.post(
+        f"/en/owner/requirements/{case_id}/invitations/{invitation_id}/cancel-before-import",
+        data={"csrf_token": csrf(owner), "expected_revision": str(revision)},
+    ).status_code == 302
+    new_title = "Updated confidential project name"
+    assert owner.post(
+        f"/en/owner/requirements/{case_id}/sections/1",
+        data={
+            "csrf_token": csrf(owner),
+            "expected_revision": str(revision),
+            "working_name": new_title,
+            "target_audience": "Local visitors",
+            "primary_purpose": "Explain available services",
+            "primary_visitor_action": "Request an appointment",
+            "supplemental_notes": "",
+        },
+    ).status_code == 302
+    old_page = former_contractor.get(f"/en/invitations/{invitation_id}")
+    assert old_page.status_code == 200
+    assert new_title.encode() not in old_page.data
+    assert b'Unavailable' in old_page.data
 
 
 def test_preview_is_non_authoritative_and_invalid_create_has_no_workflow_write(demo_runtime) -> None:
@@ -218,6 +382,74 @@ def test_pending_invitation_freezes_requirement_edits_and_json_regeneration(demo
         ).fetchone()[0] == 1
     finally:
         connection.close()
+
+
+def test_edit_after_saved_requirement_requires_a_new_version_before_invitation(demo_runtime) -> None:
+    _app, instance_root, _passwords, owner, case_id, revision, old_artifact, old_raw = _prepare_owner_json_a(demo_runtime)
+    edit = owner.post(
+        f"/en/owner/requirements/{case_id}/sections/1",
+        data={
+            "csrf_token": csrf(owner),
+            "expected_revision": str(revision),
+            "working_name": "Community Studio Website",
+            "target_audience": "Local visitors",
+            "primary_purpose": "Explain available services",
+            "primary_visitor_action": "Request an appointment",
+            "supplemental_notes": "The saved version must be refreshed after this edit.",
+        },
+    )
+    assert edit.status_code == 302
+    connection = connect_database(instance_root / "app.sqlite3")
+    try:
+        case = connection.execute(
+            "SELECT content_revision, current_json_a_artifact_id FROM cases WHERE id = ?", (case_id,)
+        ).fetchone()
+        assert case["content_revision"] == revision + 1
+        assert case["current_json_a_artifact_id"] is None
+        assert connection.execute(
+            "SELECT lifecycle FROM artifacts WHERE id = ?", (old_artifact["id"],)
+        ).fetchone()[0] == "superseded"
+    finally:
+        connection.close()
+    restarted = create_app({**_app.config, "TESTING": False})
+    assert restarted.test_client().get("/en/").status_code == 200
+    review = owner.get(f"/en/owner/requirements/{case_id}/review")
+    assert review.status_code == 200
+    assert b"The saved version must be refreshed after this edit." in review.data
+    assert b"Create Private Case" not in review.data
+    assert owner.get(f"/en/owner/requirements/{case_id}/publish").status_code == 404
+    stale_invitation = owner.post(
+        f"/en/owner/requirements/{case_id}/invitations",
+        data={
+            "csrf_token": csrf(owner),
+            "expected_revision": str(revision + 1),
+            "contractor_email": "contractor@example.test",
+            "json_a_file": (io.BytesIO(old_raw), "requirements.json"),
+        },
+    )
+    assert stale_invitation.status_code == 409
+    historical = owner.get(f"/en/owner/requirements/{case_id}/json-a/{old_artifact['id']}/download")
+    assert historical.status_code == 200
+    assert historical.data == old_raw
+
+    regenerated = owner.post(
+        f"/en/owner/requirements/{case_id}/json-a",
+        data={
+            "csrf_token": csrf(owner),
+            "expected_revision": str(revision + 1),
+            "review_confirmed": "yes",
+        },
+    )
+    assert regenerated.status_code == 302
+    connection = connect_database(instance_root / "app.sqlite3")
+    try:
+        assert connection.execute(
+            "SELECT version_no FROM artifacts WHERE case_id = ? AND kind = 'json_a' AND lifecycle = 'active'",
+            (case_id,),
+        ).fetchone()[0] == 2
+    finally:
+        connection.close()
+    assert b"Create Private Case" in owner.get(f"/en/owner/requirements/{case_id}/review").data
 
 
 def test_expired_invitation_is_not_actionable_and_owner_can_reissue(demo_runtime) -> None:

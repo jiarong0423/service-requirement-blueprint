@@ -13,7 +13,7 @@
     "version": {"type": "integer", "minimum": 1},
     "created_at": {"type": "string", "format": "date-time"},
     "label_mode": {"const": "english_only"},
-    "template_version": {"enum": ["candidate-document/1.0", "candidate-document/1.1"]},
+    "template_version": {"enum": ["candidate-document/1.0", "candidate-document/1.1", "candidate-document/1.2", "candidate-document/1.3", "candidate-document/1.4"]},
     "sources": {
       "type": "object", "additionalProperties": false, "required": ["json_a", "json_b"],
       "properties": {"json_a": {"$ref": "#/$defs/source"}, "json_b": {"$ref": "#/$defs/source"}}

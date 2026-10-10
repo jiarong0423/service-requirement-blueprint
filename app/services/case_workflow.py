@@ -109,28 +109,69 @@ def save_section(connection, case_id: str, section_no: int, values: dict[str, An
         data[SECTION_KEYS[section_no - 1]] = values
         completed.add(section_no)
         now = utc_now()
+        # A saved JSON A describes the draft at one revision only. Editing any
+        # section makes that version historical until the owner saves a new one.
+        connection.execute(
+            "UPDATE artifacts SET lifecycle = 'superseded' "
+            "WHERE case_id = ? AND kind = 'json_a' AND lifecycle = 'active'",
+            (case_id,),
+        )
         connection.execute(
             "UPDATE requirement_drafts SET data_json = ?, completed_sections_json = ?, updated_at = ? WHERE case_id = ?",
             (json.dumps(data, ensure_ascii=False), json.dumps(sorted(completed)), now, case_id),
         )
         new_revision = expected_revision + 1
         connection.execute(
-            "UPDATE cases SET title = ?, content_revision = ?, updated_at = ? WHERE id = ?",
+            "UPDATE cases SET title = ?, content_revision = ?, current_json_a_artifact_id = NULL, updated_at = ? WHERE id = ?",
             (str(data.get("project", {}).get("working_name", "Untitled")), new_revision, now, case_id),
         )
     return new_revision
 
 
+def collect_open_items(data: dict[str, Any]) -> list[dict[str, str]]:
+    """Derive one review and JSON A list from the guided choices."""
+    items: list[dict[str, str]] = []
+
+    def add(section: str, pointer: str, resolution: str, label_key: str) -> None:
+        items.append(
+            {
+                "section_code": section,
+                "field_pointer": pointer,
+                "resolution": resolution,
+                "note": "",
+                "label_key": label_key,
+            }
+        )
+
+    for index, feature in enumerate(data.get("features", {}).get("items", [])):
+        if feature.get("requirement_level") == "undecided":
+            add("features", f"/items/{index}/requirement_level", "undecided", f"feature.{feature['feature_code']}")
+
+    external = data.get("external_services_and_assets", {})
+    for collection, label_prefix in (("services", "service"), ("assets", "asset")):
+        for index, entry in enumerate(external.get(collection, [])):
+            status = entry.get("status")
+            if status in ("to_select", "contractor_proposal"):
+                resolution = "undecided" if status == "to_select" else "contractor_proposal_requested"
+                add(
+                    "external_services_and_assets",
+                    f"/{collection}/{index}/status",
+                    resolution,
+                    f"{label_prefix}.{entry[f'{label_prefix}_code']}",
+                )
+
+    budget_status = data.get("delivery_and_constraints", {}).get("budget_status")
+    if budget_status in ("undecided", "contractor_proposal_requested"):
+        add("delivery_and_constraints", "/budget_status", budget_status, "field.budget_status")
+    return items
+
+
 def build_json_a_document(data: dict[str, Any], document_id: str, version: int) -> dict[str, Any]:
     project = data.get("project", {})
-    open_items = []
-    for section_code, section in data.items():
-        if isinstance(section, dict):
-            for key, value in section.items():
-                if value == "undecided" or value == "contractor_proposal_requested":
-                    open_items.append(
-                        {"section_code": section_code, "field_pointer": key, "resolution": value, "note": ""}
-                    )
+    open_items = [
+        {key: value for key, value in item.items() if key != "label_key"}
+        for item in collect_open_items(data)
+    ]
     return {
         "schema_version": "json-a/1.1",
         "document_type": "requirement_request",

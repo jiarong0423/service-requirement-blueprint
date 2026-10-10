@@ -10,16 +10,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from app.db import immediate_transaction
+from app.db import deferred_read_transaction, immediate_transaction
 from app.services.artifact_store import (
     ArtifactStoreError,
+    MAX_DELIVERY_ARTIFACT_BYTES,
+    MAX_JSON_ARTIFACT_BYTES,
     install_fixed_blob,
     quarantine_fixed_collection_directory,
     read_verified,
-    remove_new_artifact,
 )
 from app.services.document_integrity import DocumentAssets
-from app.services.formalization_workflow import FormalizationWorkflowError, load_formal_version
+from app.services.formalization_workflow import (
+    FormalizationWorkflowError,
+    load_formal_version,
+    revalidate_formal_snapshot,
+)
 
 
 class DeliveryWorkflowError(RuntimeError):
@@ -84,9 +89,10 @@ def _formal_json_b(
     if artifact is None:
         raise DeliveryWorkflowError("formal_integrity_invalid")
     try:
-        raw = read_verified(data_root, artifact["relative_path"], artifact["sha256"])
-        if len(raw) != artifact["byte_length"]:
-            raise ArtifactStoreError("length_mismatch")
+        raw = read_verified(
+            data_root, artifact["relative_path"], artifact["sha256"], artifact["byte_length"],
+            max_bytes=MAX_JSON_ARTIFACT_BYTES,
+        )
         document = json.loads(raw.decode("utf-8"))
     except (ArtifactStoreError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise DeliveryWorkflowError("formal_integrity_invalid") from error
@@ -121,6 +127,28 @@ def _workflow(connection: sqlite3.Connection, case_id: str):
     return connection.execute("SELECT * FROM delivery_workflows WHERE case_id = ?", (case_id,)).fetchone()
 
 
+def _workflow_token(row: sqlite3.Row | None) -> tuple[object, ...] | None:
+    if row is None:
+        return None
+    return (
+        row["case_id"], row["formal_candidate_id"], row["state"],
+        row["current_delivery_id"], row["current_inspection_id"],
+        row["active_dispute_id"], row["revision"],
+    )
+
+
+def _quarantine_provisional_blob(
+    data_root: Path,
+    case_id: str,
+    collection: str,
+    record_id: str,
+) -> None:
+    try:
+        quarantine_fixed_collection_directory(data_root, case_id, collection, record_id)
+    except (ArtifactStoreError, OSError) as error:
+        raise DeliveryWorkflowError("artifact_quarantine_failed") from error
+
+
 def _event(
     connection: sqlite3.Connection,
     case_id: str,
@@ -153,43 +181,85 @@ def submit_delivery(
     summary = summary.strip()
     if not summary or len(summary) > 4000 or not 16 <= len(idempotency_key) <= 200:
         raise DeliveryWorkflowError("delivery_invalid")
-    installed_path: str | None = None
+    with deferred_read_transaction(connection):
+        try:
+            formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
+        except FormalizationWorkflowError as error:
+            raise DeliveryWorkflowError("case_unavailable") from error
+        if _role(formal, actor_id) != "contractor":
+            raise DeliveryWorkflowError("case_unavailable")
+        workflow = _workflow(connection, case_id)
+        workflow_token = _workflow_token(workflow)
+        state = workflow["state"] if workflow is not None else "FORMAL"
+        document = _formal_json_b(connection, data_root, formal)
+        criteria = _criteria(document)
+        expected = {item["criterion_id"] for item in criteria}
+        if set(item_inputs) != expected or set(test_inputs) != expected:
+            raise DeliveryWorkflowError("criteria_incomplete")
+        normalized_items: list[dict[str, str]] = []
+        normalized_tests: list[dict[str, str]] = []
+        for criterion in criteria:
+            criterion_id = criterion["criterion_id"]
+            note, evidence = (part.strip() for part in item_inputs[criterion_id])
+            outcome, observation = test_inputs[criterion_id]
+            observation = observation.strip()
+            if not note or not evidence or len(note) > 4000 or len(evidence) > 1000:
+                raise DeliveryWorkflowError("delivery_invalid")
+            if outcome not in {"PASS", "FAIL", "NOT_RUN"} or not observation or len(observation) > 4000:
+                raise DeliveryWorkflowError("delivery_invalid")
+            normalized_items.append({**criterion, "delivery_note": note, "evidence_reference": evidence})
+            normalized_tests.append({"criterion_id": criterion_id, "outcome": outcome, "observation": observation})
+        request_sha256 = _digest({
+            "actor_id": actor_id,
+            "case_id": case_id,
+            "formal_candidate_id": formal["candidate"]["id"],
+            "summary": summary,
+            "items": normalized_items,
+            "tests": normalized_tests,
+        })
+        existing = connection.execute(
+            "SELECT id, version_no, request_sha256 FROM delivery_versions WHERE case_id = ? AND idempotency_key = ?",
+            (case_id, idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(existing["request_sha256"], request_sha256):
+                raise DeliveryWorkflowError("idempotency_conflict")
+            return DeliveryResult(existing["id"], existing["version_no"], state)
+        if state not in {"FORMAL", "REMEDIATION"}:
+            raise DeliveryWorkflowError("delivery_state_invalid")
+        version_no = 1 if workflow is None else connection.execute(
+            "SELECT COALESCE(MAX(version_no), 0) + 1 FROM delivery_versions WHERE case_id = ?", (case_id,)
+        ).fetchone()[0]
+        if version_no > MAX_DELIVERY_VERSIONS:
+            raise DeliveryWorkflowError("delivery_version_limit")
+        predecessor = workflow["current_delivery_id"] if workflow is not None else None
+        remediated_inspection = workflow["current_inspection_id"] if workflow is not None else None
+        delivery_id = str(uuid.uuid4())
+        now = _now()
+        review_days = int(document["acceptance"]["review_period_days"])
+        due_at = _future(now, review_days)
+        record = {
+            "schema_version": "delivery-record/1.0", "delivery_id": delivery_id,
+            "case_id": case_id, "formal_candidate_id": formal["candidate"]["id"],
+            "version": version_no, "kind": "INITIAL" if workflow is None else "REMEDIATION",
+            "predecessor_delivery_id": predecessor, "remediated_inspection_id": remediated_inspection,
+            "submitted_by_id": actor_id, "submitted_by_role": "contractor", "summary": summary,
+            "items": normalized_items, "test_results": normalized_tests,
+            "submitted_at": now, "review_due_at": due_at,
+        }
+        raw = _canonical_json(record)
+        digest = hashlib.sha256(raw).hexdigest()
+        criteria_sha256 = _digest(sorted(expected))
+
+    install_fixed_blob(data_root, case_id, "deliveries", delivery_id, "delivery.json", raw)
+    created = False
     try:
         with immediate_transaction(connection):
             try:
-                formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
+                revalidate_formal_snapshot(connection, case_id, actor_id, formal)
             except FormalizationWorkflowError as error:
                 raise DeliveryWorkflowError("case_unavailable") from error
-            if _role(formal, actor_id) != "contractor":
-                raise DeliveryWorkflowError("case_unavailable")
-            workflow = _workflow(connection, case_id)
-            state = workflow["state"] if workflow is not None else "FORMAL"
-            document = _formal_json_b(connection, data_root, formal)
-            criteria = _criteria(document)
-            expected = {item["criterion_id"] for item in criteria}
-            if set(item_inputs) != expected or set(test_inputs) != expected:
-                raise DeliveryWorkflowError("criteria_incomplete")
-            normalized_items: list[dict[str, str]] = []
-            normalized_tests: list[dict[str, str]] = []
-            for criterion in criteria:
-                criterion_id = criterion["criterion_id"]
-                note, evidence = (part.strip() for part in item_inputs[criterion_id])
-                outcome, observation = test_inputs[criterion_id]
-                observation = observation.strip()
-                if not note or not evidence or len(note) > 4000 or len(evidence) > 1000:
-                    raise DeliveryWorkflowError("delivery_invalid")
-                if outcome not in {"PASS", "FAIL", "NOT_RUN"} or not observation or len(observation) > 4000:
-                    raise DeliveryWorkflowError("delivery_invalid")
-                normalized_items.append({**criterion, "delivery_note": note, "evidence_reference": evidence})
-                normalized_tests.append({"criterion_id": criterion_id, "outcome": outcome, "observation": observation})
-            request_sha256 = _digest({
-                "actor_id": actor_id,
-                "case_id": case_id,
-                "formal_candidate_id": formal["candidate"]["id"],
-                "summary": summary,
-                "items": normalized_items,
-                "tests": normalized_tests,
-            })
+            locked_workflow = _workflow(connection, case_id)
             existing = connection.execute(
                 "SELECT id, version_no, request_sha256 FROM delivery_versions WHERE case_id = ? AND idempotency_key = ?",
                 (case_id, idempotency_key),
@@ -197,79 +267,55 @@ def submit_delivery(
             if existing is not None:
                 if not hmac.compare_digest(existing["request_sha256"], request_sha256):
                     raise DeliveryWorkflowError("idempotency_conflict")
-                return DeliveryResult(existing["id"], existing["version_no"], state)
-            if state not in {"FORMAL", "REMEDIATION"}:
-                raise DeliveryWorkflowError("delivery_state_invalid")
-            version_no = 1 if workflow is None else connection.execute(
-                "SELECT COALESCE(MAX(version_no), 0) + 1 FROM delivery_versions WHERE case_id = ?", (case_id,)
-            ).fetchone()[0]
-            if version_no > MAX_DELIVERY_VERSIONS:
-                raise DeliveryWorkflowError("delivery_version_limit")
-            predecessor = workflow["current_delivery_id"] if workflow is not None else None
-            remediated_inspection = workflow["current_inspection_id"] if workflow is not None else None
-            delivery_id = str(uuid.uuid4())
-            now = _now()
-            review_days = int(document["acceptance"]["review_period_days"])
-            due_at = _future(now, review_days)
-            record = {
-                "schema_version": "delivery-record/1.0",
-                "delivery_id": delivery_id,
-                "case_id": case_id,
-                "formal_candidate_id": formal["candidate"]["id"],
-                "version": version_no,
-                "kind": "INITIAL" if workflow is None else "REMEDIATION",
-                "predecessor_delivery_id": predecessor,
-                "remediated_inspection_id": remediated_inspection,
-                "submitted_by_id": actor_id,
-                "submitted_by_role": "contractor",
-                "summary": summary,
-                "items": normalized_items,
-                "test_results": normalized_tests,
-                "submitted_at": now,
-                "review_due_at": due_at,
-            }
-            raw = _canonical_json(record)
-            installed_path = install_fixed_blob(data_root, case_id, "deliveries", delivery_id, "delivery.json", raw)
-            digest = hashlib.sha256(raw).hexdigest()
-            criteria_sha256 = _digest(sorted(expected))
-            connection.execute(
-                "INSERT INTO delivery_versions(id, case_id, formal_candidate_id, version_no, kind, predecessor_delivery_id, "
-                "remediated_inspection_id, submitted_by_id, summary, relative_path, sha256, byte_length, item_count, criteria_sha256, "
-                "request_sha256, submitted_at, review_due_at, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (delivery_id, case_id, formal["candidate"]["id"], version_no, record["kind"], predecessor,
-                 remediated_inspection, actor_id, summary, installed_path, digest, len(raw), len(criteria), criteria_sha256,
-                 request_sha256, now, due_at, idempotency_key),
-            )
-            for item, test in zip(normalized_items, normalized_tests, strict=True):
-                connection.execute(
-                    "INSERT INTO delivery_items(id, delivery_id, criterion_id, description, verification_method, delivery_note, evidence_reference) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), delivery_id, item["criterion_id"], item["description"], item["verification_method"], item["delivery_note"], item["evidence_reference"]),
-                )
-                connection.execute(
-                    "INSERT INTO delivery_test_results(id, delivery_id, criterion_id, outcome, observation) VALUES (?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), delivery_id, test["criterion_id"], test["outcome"], test["observation"]),
-                )
-            next_state = "DELIVERED" if workflow is None else "REINSPECTION"
-            if workflow is None:
-                connection.execute(
-                    "INSERT INTO delivery_workflows(case_id, formal_candidate_id, state, current_delivery_id, revision, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, 1, ?, ?)",
-                    (case_id, formal["candidate"]["id"], next_state, delivery_id, now, now),
-                )
+                result = DeliveryResult(existing["id"], existing["version_no"], locked_workflow["state"] if locked_workflow else "FORMAL")
             else:
+                locked_version = 1 if locked_workflow is None else connection.execute(
+                    "SELECT COALESCE(MAX(version_no), 0) + 1 FROM delivery_versions WHERE case_id = ?", (case_id,)
+                ).fetchone()[0]
+                if _workflow_token(locked_workflow) != workflow_token or locked_version != version_no:
+                    raise DeliveryWorkflowError("workflow_stale")
+                installed_path = f"cases/{case_id}/deliveries/{delivery_id}/delivery.json"
                 connection.execute(
-                    "UPDATE delivery_workflows SET state = ?, current_delivery_id = ?, current_inspection_id = NULL, "
-                    "revision = revision + 1, updated_at = ? WHERE case_id = ? AND state = 'REMEDIATION'",
-                    (next_state, delivery_id, now, case_id),
+                    "INSERT INTO delivery_versions(id, case_id, formal_candidate_id, version_no, kind, predecessor_delivery_id, "
+                    "remediated_inspection_id, submitted_by_id, summary, relative_path, sha256, byte_length, item_count, criteria_sha256, "
+                    "request_sha256, submitted_at, review_due_at, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (delivery_id, case_id, formal["candidate"]["id"], version_no, record["kind"], predecessor,
+                     remediated_inspection, actor_id, summary, installed_path, digest, len(raw), len(criteria), criteria_sha256,
+                     request_sha256, now, due_at, idempotency_key),
                 )
-            _event(connection, case_id, "DELIVERY_SUBMITTED" if version_no == 1 else "REMEDIATION_SUBMITTED", "DELIVERY", delivery_id, actor_id, "contractor", now)
-            _event(connection, case_id, "REVIEW_DEADLINE_SET", "DELIVERY", delivery_id, None, None, now, due_at)
-            return DeliveryResult(delivery_id, version_no, next_state)
+                for item, test in zip(normalized_items, normalized_tests, strict=True):
+                    connection.execute(
+                        "INSERT INTO delivery_items(id, delivery_id, criterion_id, description, verification_method, delivery_note, evidence_reference) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (str(uuid.uuid4()), delivery_id, item["criterion_id"], item["description"], item["verification_method"], item["delivery_note"], item["evidence_reference"]),
+                    )
+                    connection.execute(
+                        "INSERT INTO delivery_test_results(id, delivery_id, criterion_id, outcome, observation) VALUES (?, ?, ?, ?, ?)",
+                        (str(uuid.uuid4()), delivery_id, test["criterion_id"], test["outcome"], test["observation"]),
+                    )
+                next_state = "DELIVERED" if workflow is None else "REINSPECTION"
+                if workflow is None:
+                    connection.execute(
+                        "INSERT INTO delivery_workflows(case_id, formal_candidate_id, state, current_delivery_id, revision, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, 1, ?, ?)",
+                        (case_id, formal["candidate"]["id"], next_state, delivery_id, now, now),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE delivery_workflows SET state = ?, current_delivery_id = ?, current_inspection_id = NULL, "
+                        "revision = revision + 1, updated_at = ? WHERE case_id = ? AND state = 'REMEDIATION'",
+                        (next_state, delivery_id, now, case_id),
+                    )
+                _event(connection, case_id, "DELIVERY_SUBMITTED" if version_no == 1 else "REMEDIATION_SUBMITTED", "DELIVERY", delivery_id, actor_id, "contractor", now)
+                _event(connection, case_id, "REVIEW_DEADLINE_SET", "DELIVERY", delivery_id, None, None, now, due_at)
+                result = DeliveryResult(delivery_id, version_no, next_state)
+                created = True
     except BaseException:
-        if installed_path is not None:
-            remove_new_artifact(data_root, installed_path)
+        _quarantine_provisional_blob(data_root, case_id, "deliveries", delivery_id)
         raise
+    if not created:
+        _quarantine_provisional_blob(data_root, case_id, "deliveries", delivery_id)
+    return result
 
 
 def begin_inspection(
@@ -281,13 +327,18 @@ def begin_inspection(
     actor_id: str,
     expected_revision: int,
 ) -> None:
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         try:
             formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
         except FormalizationWorkflowError as error:
             raise DeliveryWorkflowError("case_unavailable") from error
         if _role(formal, actor_id) != "client":
             raise DeliveryWorkflowError("case_unavailable")
+    with immediate_transaction(connection):
+        try:
+            revalidate_formal_snapshot(connection, case_id, actor_id, formal)
+        except FormalizationWorkflowError as error:
+            raise DeliveryWorkflowError("case_unavailable") from error
         workflow = _workflow(connection, case_id)
         if workflow is None or workflow["state"] != "DELIVERED" or workflow["current_delivery_id"] != delivery_id or workflow["revision"] != expected_revision:
             raise DeliveryWorkflowError("workflow_stale")
@@ -316,7 +367,7 @@ def submit_inspection(
 ) -> InspectionResult:
     if not 16 <= len(idempotency_key) <= 200:
         raise DeliveryWorkflowError("inspection_invalid")
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         try:
             formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
         except FormalizationWorkflowError as error:
@@ -351,53 +402,89 @@ def submit_inspection(
             "results": [{"criterion_id": item["criterion_id"], "result": result, "reason": reason} for item, result, reason in normalized],
             "explicit_acceptance": explicit_acceptance,
         })
+        criteria_sha256 = _digest(sorted(expected))
+        workflow_token = _workflow_token(workflow)
+        item_token = tuple((item["id"], item["criterion_id"]) for item in items)
         existing = connection.execute(
             "SELECT id, decision, request_sha256 FROM inspection_rounds WHERE case_id = ? AND idempotency_key = ?",
             (case_id, idempotency_key),
         ).fetchone()
-        if existing is not None:
-            if not hmac.compare_digest(existing["request_sha256"], request_sha256):
-                raise DeliveryWorkflowError("idempotency_conflict")
-            return InspectionResult(existing["id"], existing["decision"], workflow["state"] if workflow else "")
-        if workflow is None or workflow["state"] not in {"UNDER_ACCEPTANCE", "REINSPECTION"} or workflow["current_delivery_id"] != delivery_id or workflow["revision"] != expected_revision:
-            raise DeliveryWorkflowError("workflow_stale")
-        decision = "ACCEPTED" if all_pass else "RETURNED"
-        next_state = "ACCEPTED" if all_pass else "REMEDIATION"
+        existing_token = None if existing is None else tuple(existing)
         inspection_id = str(uuid.uuid4())
         round_no = connection.execute(
             "SELECT COALESCE(MAX(round_no), 0) + 1 FROM inspection_rounds WHERE case_id = ?", (case_id,)
         ).fetchone()[0]
         now = _now()
-        connection.execute(
-            "INSERT INTO inspection_rounds(id, case_id, delivery_id, round_no, kind, decision, explicit_acceptance, inspected_by_id, inspected_at, "
-            "result_count, criteria_sha256, request_sha256, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (inspection_id, case_id, delivery_id, round_no, "INITIAL" if round_no == 1 else "REINSPECTION", decision, int(all_pass), actor_id, now,
-             len(items), _digest(sorted(expected)), request_sha256, idempotency_key),
-        )
-        for item, result, reason in normalized:
-            connection.execute(
-                "INSERT INTO inspection_item_results(id, inspection_id, delivery_item_id, criterion_id, result, reason) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), inspection_id, item["id"], item["criterion_id"], result, reason),
-            )
+        decision = "ACCEPTED" if all_pass else "RETURNED"
+        next_state = "ACCEPTED" if all_pass else "REMEDIATION"
+        result_rows = [
+            (str(uuid.uuid4()), inspection_id, item["id"], item["criterion_id"], result, reason)
+            for item, result, reason in normalized
+        ]
+        acceptance_id = str(uuid.uuid4()) if all_pass else None
+        evidence_sha256 = None
         if all_pass:
             evidence_sha256 = _digest({
                 "case_id": case_id,
                 "formal_candidate_id": formal["candidate"]["id"],
                 "delivery_id": delivery_id,
                 "inspection_id": inspection_id,
-                "criteria_sha256": _digest(sorted(expected)),
+                "criteria_sha256": criteria_sha256,
                 "accepted_by_id": actor_id,
                 "accepted_at": now,
             })
+    with immediate_transaction(connection):
+        try:
+            revalidate_formal_snapshot(connection, case_id, actor_id, formal)
+        except FormalizationWorkflowError as error:
+            raise DeliveryWorkflowError("case_unavailable") from error
+        locked_workflow = _workflow(connection, case_id)
+        locked_items = connection.execute(
+            "SELECT id, criterion_id FROM delivery_items WHERE delivery_id = ? ORDER BY criterion_id", (delivery_id,)
+        ).fetchall()
+        if (
+            _workflow_token(locked_workflow) != workflow_token
+            or tuple((item["id"], item["criterion_id"]) for item in locked_items) != item_token
+        ):
+            raise DeliveryWorkflowError("workflow_stale")
+        locked_existing = connection.execute(
+            "SELECT id, decision, request_sha256 FROM inspection_rounds WHERE case_id = ? AND idempotency_key = ?",
+            (case_id, idempotency_key),
+        ).fetchone()
+        if locked_existing is not None:
+            if not hmac.compare_digest(locked_existing["request_sha256"], request_sha256):
+                raise DeliveryWorkflowError("idempotency_conflict")
+            return InspectionResult(locked_existing["id"], locked_existing["decision"], locked_workflow["state"] if locked_workflow else "")
+        if existing_token is not None:
+            raise DeliveryWorkflowError("workflow_stale")
+        if locked_workflow is None or locked_workflow["state"] not in {"UNDER_ACCEPTANCE", "REINSPECTION"} or locked_workflow["current_delivery_id"] != delivery_id or locked_workflow["revision"] != expected_revision:
+            raise DeliveryWorkflowError("workflow_stale")
+        locked_round_no = connection.execute(
+            "SELECT COALESCE(MAX(round_no), 0) + 1 FROM inspection_rounds WHERE case_id = ?", (case_id,)
+        ).fetchone()[0]
+        if locked_round_no != round_no:
+            raise DeliveryWorkflowError("workflow_stale")
+        connection.execute(
+            "INSERT INTO inspection_rounds(id, case_id, delivery_id, round_no, kind, decision, explicit_acceptance, inspected_by_id, inspected_at, "
+            "result_count, criteria_sha256, request_sha256, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (inspection_id, case_id, delivery_id, round_no, "INITIAL" if round_no == 1 else "REINSPECTION", decision, int(all_pass), actor_id, now,
+             len(items), criteria_sha256, request_sha256, idempotency_key),
+        )
+        for result_row in result_rows:
+            connection.execute(
+                "INSERT INTO inspection_item_results(id, inspection_id, delivery_item_id, criterion_id, result, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                result_row,
+            )
+        if all_pass:
             connection.execute(
                 "INSERT INTO acceptance_events(id, case_id, formal_candidate_id, delivery_id, inspection_id, accepted_by_id, evidence_sha256, accepted_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), case_id, formal["candidate"]["id"], delivery_id, inspection_id, actor_id, evidence_sha256, now),
+                (acceptance_id, case_id, formal["candidate"]["id"], delivery_id, inspection_id, actor_id, evidence_sha256, now),
             )
         updated = connection.execute(
             "UPDATE delivery_workflows SET state = ?, current_inspection_id = ?, revision = revision + 1, updated_at = ? "
             "WHERE case_id = ? AND state = ? AND current_delivery_id = ? AND revision = ?",
-            (next_state, inspection_id, now, case_id, workflow["state"], delivery_id, expected_revision),
+            (next_state, inspection_id, now, case_id, locked_workflow["state"], delivery_id, expected_revision),
         )
         if updated.rowcount != 1:
             raise DeliveryWorkflowError("workflow_stale")
@@ -417,12 +504,17 @@ def open_dispute(
     reason = reason.strip()
     if not reason or len(reason) > 4000:
         raise DeliveryWorkflowError("dispute_invalid")
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         try:
             formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
         except FormalizationWorkflowError as error:
             raise DeliveryWorkflowError("case_unavailable") from error
         role = _role(formal, actor_id)
+    with immediate_transaction(connection):
+        try:
+            revalidate_formal_snapshot(connection, case_id, actor_id, formal)
+        except FormalizationWorkflowError as error:
+            raise DeliveryWorkflowError("case_unavailable") from error
         workflow = _workflow(connection, case_id)
         if workflow is None or workflow["state"] not in {"DELIVERED", "UNDER_ACCEPTANCE", "REMEDIATION", "REINSPECTION"} or workflow["revision"] != expected_revision:
             raise DeliveryWorkflowError("workflow_stale")
@@ -456,12 +548,17 @@ def add_dispute_position(
     position_text = position_text.strip()
     if not position_text or len(position_text) > 4000:
         raise DeliveryWorkflowError("position_invalid")
-    with immediate_transaction(connection):
+    with deferred_read_transaction(connection):
         try:
             formal = load_formal_version(connection, data_root, assets, case_id, actor_id)
         except FormalizationWorkflowError as error:
             raise DeliveryWorkflowError("case_unavailable") from error
         role = _role(formal, actor_id)
+    with immediate_transaction(connection):
+        try:
+            revalidate_formal_snapshot(connection, case_id, actor_id, formal)
+        except FormalizationWorkflowError as error:
+            raise DeliveryWorkflowError("case_unavailable") from error
         workflow = _workflow(connection, case_id)
         if workflow is None or workflow["state"] != "DISPUTED" or workflow["active_dispute_id"] != dispute_id:
             raise DeliveryWorkflowError("dispute_unavailable")
@@ -596,7 +693,9 @@ def load_delivery_dashboard(
     ).fetchall()
     own_position = next((position for position in positions if position["actor_role"] == role), None)
     exports = connection.execute(
-        "SELECT id, version_no, sha256, byte_length, prepared_at FROM evidence_exports WHERE case_id = ? ORDER BY version_no", (case_id,)
+        "SELECT id, version_no, source_fingerprint, sha256, byte_length, prepared_at "
+        "FROM evidence_exports WHERE case_id = ? ORDER BY version_no",
+        (case_id,),
     ).fetchall()
     events = connection.execute(
         "SELECT * FROM case_timeline_events WHERE case_id = ? ORDER BY occurred_at, id", (case_id,)
@@ -640,7 +739,10 @@ def read_delivery_record(
     if row["relative_path"] != f"cases/{case_id}/deliveries/{delivery_id}/delivery.json":
         raise DeliveryWorkflowError("delivery_integrity_invalid")
     try:
-        raw = read_verified(data_root, row["relative_path"], row["sha256"])
+        raw = read_verified(
+            data_root, row["relative_path"], row["sha256"], row["byte_length"],
+            max_bytes=MAX_DELIVERY_ARTIFACT_BYTES,
+        )
     except (ArtifactStoreError, OSError) as error:
         raise DeliveryWorkflowError("delivery_integrity_invalid") from error
     if len(raw) != row["byte_length"]:
@@ -656,7 +758,10 @@ def reconcile_delivery_storage(connection: sqlite3.Connection, data_root: Path) 
         if row["relative_path"] != expected_path:
             raise DeliveryWorkflowError("delivery_path_invalid")
         try:
-            raw = read_verified(data_root, expected_path, row["sha256"])
+            raw = read_verified(
+                data_root, expected_path, row["sha256"], row["byte_length"],
+                max_bytes=MAX_DELIVERY_ARTIFACT_BYTES,
+            )
             record = json.loads(raw.decode("utf-8"))
         except (ArtifactStoreError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise DeliveryWorkflowError("delivery_integrity_invalid") from error

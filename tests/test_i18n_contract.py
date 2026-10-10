@@ -84,6 +84,73 @@ def test_public_demo_currency_is_test_only_and_ui_has_no_regional_default(projec
     assert "USD" not in template and "TWD" not in template
 
 
+def test_requirement_sections_four_through_eight_repopulate_saved_values(demo_runtime) -> None:
+    app, instance_root, passwords = demo_runtime
+    with app.test_client() as client:
+        assert login(client, "en", "owner@example.test", passwords["owner"]).status_code == 302
+        case_id = complete_requirement(client, instance_root)
+
+        expectations = {
+            4: (b'name="feature_booking"', b'value="required" selected', b'name="rules_booking"'),
+            5: (b'name="contains_customer_data"', b'value="yes" selected', b"30 days"),
+            6: (b'name="service_domain"', b'value="contractor_proposal" selected', b'name="asset_logo"'),
+            7: (b"https://example.com|clear", b"responsive", b"copied design"),
+            8: (b'name="budget_currency" value="XTS"', b'name="budget_min_amount" value="1000"', b'name="required_deadline" type="date" value="2026-12-31"'),
+        }
+        for section_no, markers in expectations.items():
+            response = client.get(f"/en/owner/requirements/{case_id}/sections/{section_no}")
+            assert response.status_code == 200
+            assert all(marker in response.data for marker in markers)
+            assert b'aria-current="step"' in response.data
+
+
+def test_requirement_repopulation_preserves_zero_unicode_and_escaped_text(demo_runtime) -> None:
+    app, instance_root, passwords = demo_runtime
+    with app.test_client() as client:
+        assert login(client, "en", "owner@example.test", passwords["owner"]).status_code == 302
+        case_id = complete_requirement(client, instance_root)
+
+        def revision() -> int:
+            connection = connect_database(instance_root / "app.sqlite3")
+            try:
+                return int(connection.execute("SELECT content_revision FROM cases WHERE id = ?", (case_id,)).fetchone()[0])
+            finally:
+                connection.close()
+
+        feature_payload = {"csrf_token": csrf(client), "expected_revision": str(revision())}
+        for code in ("booking", "form", "membership", "search", "cart", "admin", "notification", "other"):
+            feature_payload[f"feature_{code}"] = "desired" if code == "booking" else "excluded"
+            feature_payload[f"rules_{code}"] = "Use <priority> & café" if code == "booking" else ""
+        assert client.post(f"/en/owner/requirements/{case_id}/sections/4", data=feature_payload).status_code == 302
+
+        budget_payload = {
+            "csrf_token": csrf(client),
+            "expected_revision": str(revision()),
+            "deliverables": "Source archive",
+            "source_code_ownership": "client",
+            "account_ownership": "client",
+            "deployment_expectation": "local",
+            "maintenance_expectation": "separate proposal",
+            "launch_conditions": "checks pass",
+            "required_deadline": "",
+            "budget_status": "range",
+            "budget_currency": "XTS",
+            "budget_min_amount": "0",
+            "budget_max_amount": "0",
+            "acceptance_expectations": "explicit review",
+            "constraints": "offline",
+        }
+        assert client.post(f"/en/owner/requirements/{case_id}/sections/8", data=budget_payload).status_code == 302
+
+        feature_page = client.get(f"/en/owner/requirements/{case_id}/sections/4")
+        assert b'value="desired" selected' in feature_page.data
+        assert b"Use &lt;priority&gt; &amp; caf" in feature_page.data
+        budget_page = client.get(f"/en/owner/requirements/{case_id}/sections/8")
+        assert b'name="budget_min_amount" value="0"' in budget_page.data
+        assert b'name="budget_max_amount" value="0"' in budget_page.data
+        assert b'name="required_deadline" type="date" value=""' in budget_page.data
+
+
 def test_requirement_blueprint_wraps_long_user_text_inside_three_nodes() -> None:
     namespace = {"svg": "http://www.w3.org/2000/svg"}
     labels = (

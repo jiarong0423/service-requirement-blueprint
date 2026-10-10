@@ -2,11 +2,14 @@
 
 This guide demonstrates one accepted case and one disputed case without network access. Use separate browser profiles or one normal and one private window so the client and contractor keep distinct signed sessions.
 
+The current edited video is 161.8 seconds at 1.1× speed, with 23 scenes and 39 English subtitle cues. Use `demo-capture-guide.md` for its factual boundary, `demo-production-package.md` for media composition, `demo-shot-list.md` for scene timing, `demo-voiceover.txt` for narration, and `demo-script.srt` for measured subtitle timing. It combines illustrations, synthetic application records, recorded actions, and verified artifact stills; it does not replace this full interactive walkthrough. The former 105-second plan is historical.
+
 ## Prepare
 
 1. Initialize and start the app with the commands in `README.md`.
-2. Open `http://127.0.0.1:5000/en/login` in two sessions.
-3. Sign in as `owner@example.test` in the client session and `contractor@example.test` in the contractor session.
+2. Open `http://127.0.0.1:5000/en/` in separate client and contractor sessions, or use the same port set with `POC_PORT` when starting the app (for example, `http://127.0.0.1:5051/en/` for `POC_PORT=5051`). Choose **Client** in the first session and **Invited contractor** in the second.
+3. Confirm that the client entry opens `/en/login?account=client&flow=start`, the contractor entry opens `/en/login?account=contractor`, each page explains the matching role, both email and password fields begin empty, and each page provides **Back to overview**. Sign in with the synthetic accounts created during local initialization.
+4. Before recording the administrator segment, open `/en/` in a third session, choose **Administrator**, confirm that `/en/login?account=admin` explains the administrative boundary with empty email and password fields, and sign in with the synthetic administrator account created during local initialization.
 
 ## Agreement path
 

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title description">
+  <title id="title">Service Requirement Blueprint end card</title>
+  <desc id="description">A navy end card with the product name and the message Clear scope. Shared version. Traceable delivery.</desc>
+  <rect width="1920" height="1080" fill="#101a2d"/>
+  <rect x="192" y="206" width="88" height="88" rx="22" fill="#2367d1"/>
+  <text x="236" y="261" fill="#ffffff" font-family="Arial, sans-serif" font-size="26" font-weight="700" text-anchor="middle">SRB</text>
+  <text x="192" y="410" fill="#ffffff" font-family="Arial, sans-serif" font-size="82" font-weight="700">Service Requirement Blueprint</text>
+  <text x="192" y="535" fill="#dbe6f6" font-family="Arial, sans-serif" font-size="54" font-weight="600">Clear scope. Shared version. Traceable delivery.</text>
+  <line x1="192" y1="675" x2="1728" y2="675" stroke="#2367d1" stroke-width="8"/>
+  <text x="192" y="772" fill="#9fb2ce" font-family="Arial, sans-serif" font-size="34">Clarify</text>
+  <circle cx="402" cy="760" r="8" fill="#2367d1"/>
+  <text x="468" y="772" fill="#9fb2ce" font-family="Arial, sans-serif" font-size="34">Confirm</text>
+  <circle cx="700" cy="760" r="8" fill="#2367d1"/>
+  <text x="766" y="772" fill="#9fb2ce" font-family="Arial, sans-serif" font-size="34">Deliver</text>
+</svg>
