@@ -41,6 +41,14 @@ The official [Devpost Learn Skill Pack](https://github.com/challengepost/learn-a
 
 **Current published handoff (2026-10-11):** the 161.8-second demo at 1.1× speed (23 scenes, 39 captions) is [available on YouTube](https://www.youtube.com/watch?v=D5lQzvLHDhw) and embedded in the [Devpost project](https://devpost.com/software/service-requirement-blueprint). The public source has been synchronized. A review of all five Devpost edit steps found the project submitted, with saved project fields, five gallery images, survey answers, and personal declarations. Saved declarations do not independently establish eligibility or learner-only authorship; continuous human audiovisual review remains unverified. These publication facts do not certify every Skill Pack interaction as complete. See the [current capture guide](devpost/demo-capture-guide.md). The [official rules](https://learn-ai-basics.devpost.com/rules) require a working PoC, public source with planning documents, and a demonstration video; hosted application deployment is not required. Judges may choose to test the project.
 
+**AI tools used.** Devpost lists Codex and OpenAI under Built With; this is what each AI tool did:
+
+- OpenAI Codex was the coding agent. It ran the six Skill Pack stages with the learner and implemented the code, which the learner reviewed.
+- The three illustrated scenario images in the demo video are AI-generated, from art-direction prompts drafted with Google Gemini.
+- The demo narration was generated with a Gemini API voice.
+- Claude performed one independent code review; its findings were fixed before publication.
+- The running application calls no AI model or external API. Contract terms, confirmation, and acceptance follow deterministic rules.
+
 ## Implemented journey
 
 1. The client completes eight guided requirement sections and downloads immutable JSON A bytes.

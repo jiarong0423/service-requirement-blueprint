@@ -16,9 +16,9 @@
       "sha256": "94d87f018655e91639f80b9edc12d592a8734f4087ab3da9f9e3355b286c9e3f"
     },
     {
-      "byte_length": 10973,
+      "byte_length": 11632,
       "path": "README.md",
-      "sha256": "2eba127c8d027643220f48acc876d89cb19ef51cc5ba4b7f3b352d0a98a0c4bc"
+      "sha256": "c4b8ebac16932f80e7bf3e475b32b99df47fabf9ac37dcc0a7f4825d1671e94d"
     },
     {
       "byte_length": 10570,
@@ -707,8 +707,8 @@
     }
   ],
   "package_kind": "public_source_candidate",
-  "review_date": "2026-10-11",
+  "review_date": "2026-10-25",
   "schema_version": "public-export-manifest/1.0",
-  "source_commit": "9c146334fb384b40b16d837f5f7fd5f3e98d8aa8",
-  "source_tree": "1c21df152117a5db9ed54cc111940cd7d5aab5f3"
+  "source_commit": "84917ef1449bcaf402ca6514b6bc76cf73ea6468",
+  "source_tree": "e753fae0eea65a27bbace99a911806ee5509a224"
 }

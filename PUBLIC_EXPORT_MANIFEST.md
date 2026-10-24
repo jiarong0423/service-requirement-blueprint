@@ -1,7 +1,7 @@
 # Current Public Export Manifest
 
-Review date: 2026-10-11  
-Source snapshot: `9c146334fb384b40b16d837f5f7fd5f3e98d8aa8`
+Review date: 2026-10-25  
+Source snapshot: `84917ef1449bcaf402ca6514b6bc76cf73ea6468`
 Public repository: <https://github.com/jiarong0423/service-requirement-blueprint>.
 
 ## Exact source identity

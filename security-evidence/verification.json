@@ -1,8 +1,8 @@
 {
   "schema": "public-source-verification/1.0",
-  "reviewed_at": "2026-10-11T07:29:11.630914+08:00",
-  "source_commit": "9c146334fb384b40b16d837f5f7fd5f3e98d8aa8",
-  "source_manifest_sha256": "78246d2d91173fc13f7511c227c215cb361a0604ad17540e7dff595509c86943",
+  "reviewed_at": "2026-10-25T07:48:32+08:00",
+  "source_commit": "84917ef1449bcaf402ca6514b6bc76cf73ea6468",
+  "source_manifest_sha256": "10c821c7bc11cf56df14258c2836b1bf1076e77b8d5e43e461f2c40a9d78ecb0",
   "source_file_count": 141,
   "local_full_regression": {
     "commit": "0095518c2c01249e2a51405fc41b46dd88147fc6",
@@ -105,5 +105,17 @@
     "observed_devpost_state": "SUBMITTED;5/5 steps done",
     "human_continuous_listening": "UNKNOWN",
     "eligibility_and_learner_only_authorship": "Not independently certified"
+  },
+  "ai_tools_documentation_delta": {
+    "parent_source_commit": "9c146334fb384b40b16d837f5f7fd5f3e98d8aa8",
+    "final_source_commit": "84917ef1449bcaf402ca6514b6bc76cf73ea6468",
+    "changed_files": [
+      "README.md"
+    ],
+    "reason": "Say what each AI tool listed under Devpost Built With was used for (consistency; not a rule requirement)",
+    "full_local_regression": "322 passed, 1 skipped (README-only delta; ship and export tests 15 passed after the final wording)",
+    "runtime_tests_tools_changed": false,
+    "secret_scan": "gitleaks dir on the new package: no leaks found",
+    "semgrep_rerun": "Semgrep 1.182.0 with security-evidence/semgrep-rules.json: 0 matches, 0 errors; the five test-only matches reviewed on 2026-10-11 under 1.176.0 are in files unchanged since then"
   }
 }
