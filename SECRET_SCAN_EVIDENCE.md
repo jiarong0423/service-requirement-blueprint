@@ -1,7 +1,7 @@
 # Current Secret Scan Evidence
 
 Review date: 2026-10-25  
-Source snapshot: `84917ef1449bcaf402ca6514b6bc76cf73ea6468`.
+Source snapshot: `725c2fbb365ba0be43e79b88db0bc25d30effa70`.
 
 Result: **PASS** (Gitleaks exit code 0, zero findings for the immutable publication package).
 
@@ -12,3 +12,4 @@ Only the allowlisted Git blobs, generated source manifest, diagram assets, and e
 This proves the scanned public scope only; it is not a claim that every private historical file has been inspected.
 
 On 2026-10-25 the package with the README AI-tools note was scanned again with `gitleaks dir`: no leaks found.
+The package with the updated six-step map was scanned again with `gitleaks dir`: no leaks found.

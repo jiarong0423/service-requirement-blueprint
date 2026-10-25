@@ -411,14 +411,14 @@
       "sha256": "2bec509d24d24f11825a452ddc42722cc9436d44b34803554f362932b97f1abf"
     },
     {
-      "byte_length": 72043,
+      "byte_length": 70697,
       "path": "devpost/media/skill-pack-flow.png",
-      "sha256": "92b3fa6b9b1db26414ec429eeeadad9b69ea00cc20f4601f2db0914aee12e993"
+      "sha256": "68bd8bc4dfdd0c64aaee0f7559c10bdea02b729bbc98ae817891329ff41db32b"
     },
     {
-      "byte_length": 4629,
+      "byte_length": 4620,
       "path": "devpost/media/skill-pack-flow.svg",
-      "sha256": "bc79838cf279b6a091138de429a1dd3980cfb7fd51219fce8aed444702a028cd"
+      "sha256": "6c589121cfca61bf0b6f308e7bfae66b0c8898dd82d1136435b7f8b7c750dcf3"
     },
     {
       "byte_length": 25826,
@@ -709,6 +709,6 @@
   "package_kind": "public_source_candidate",
   "review_date": "2026-10-25",
   "schema_version": "public-export-manifest/1.0",
-  "source_commit": "84917ef1449bcaf402ca6514b6bc76cf73ea6468",
-  "source_tree": "e753fae0eea65a27bbace99a911806ee5509a224"
+  "source_commit": "725c2fbb365ba0be43e79b88db0bc25d30effa70",
+  "source_tree": "637713504a518443c52bc260c2d67cb204f6039f"
 }

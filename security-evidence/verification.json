@@ -1,8 +1,8 @@
 {
   "schema": "public-source-verification/1.0",
-  "reviewed_at": "2026-10-25T07:48:32+08:00",
-  "source_commit": "84917ef1449bcaf402ca6514b6bc76cf73ea6468",
-  "source_manifest_sha256": "10c821c7bc11cf56df14258c2836b1bf1076e77b8d5e43e461f2c40a9d78ecb0",
+  "reviewed_at": "2026-10-25T08:23:55+08:00",
+  "source_commit": "725c2fbb365ba0be43e79b88db0bc25d30effa70",
+  "source_manifest_sha256": "3aebf65a5f6b659522b47f19f94189e456d97a5e8f44802e20067cef218b952b",
   "source_file_count": 141,
   "local_full_regression": {
     "commit": "0095518c2c01249e2a51405fc41b46dd88147fc6",
@@ -117,5 +117,19 @@
     "runtime_tests_tools_changed": false,
     "secret_scan": "gitleaks dir on the new package: no leaks found",
     "semgrep_rerun": "Semgrep 1.182.0 with security-evidence/semgrep-rules.json: 0 matches, 0 errors; the five test-only matches reviewed on 2026-10-11 under 1.176.0 are in files unchanged since then"
+  },
+  "six_step_map_delta": {
+    "parent_source_commit": "84917ef1449bcaf402ca6514b6bc76cf73ea6468",
+    "final_source_commit": "725c2fbb365ba0be43e79b88db0bc25d30effa70",
+    "changed_files": [
+      "devpost/media/skill-pack-flow.png",
+      "devpost/media/skill-pack-flow.svg"
+    ],
+    "reason": "Bottom sentence said step 6 remained in progress; source, video and submission were done on 2026-10-11",
+    "method": "Only the bottom text band of the PNG redrawn with Pillow and bundled Noto Sans TC 21 px (reproduces the old sentence pixel for pixel); SVG text changed",
+    "focused_checks_passed": "44 (ship docs, public candidate, UI contract)",
+    "runtime_tests_tools_changed": false,
+    "secret_scan": "gitleaks dir: no leaks found",
+    "semgrep_rerun": "Semgrep 1.182.0, published rules: 0 matches, 0 errors"
   }
 }
